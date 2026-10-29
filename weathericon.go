@@ -121,6 +121,14 @@ func moonShape(cx, cy, r float64) shape {
 // day: si es de día; light: si la barra de tareas usa tema claro.
 func drawWeather(n, code int, day, light bool) []byte {
 	c := newCanvas(n)
+	drawWeatherOn(c, code, day, light, 0, 0, 1)
+	return c.bgra()
+}
+
+// drawWeatherOn dibuja el estado del cielo dentro del cuadro (ox, oy, sz) del lienzo,
+// en coordenadas de 0 a 1 del ícono completo.
+func drawWeatherOn(cv *canvas, code int, day, light bool, ox, oy, sz float64) {
+	c := &region{cv: cv, ox: ox, oy: oy, sz: sz}
 
 	sunCol := hex(0xFFC233)
 	moonCol := hex(0xF2D675)
@@ -196,7 +204,60 @@ func drawWeather(n, code int, day, light bool) []byte {
 	default: // sin datos todavía
 		c.fill(cloudShape(0.0, 0.08, 1.0), cloudCol)
 	}
-	return c.bgra()
+}
+
+// region dibuja formas dentro de un cuadro del lienzo.
+type region struct {
+	cv         *canvas
+	ox, oy, sz float64
+}
+
+func (r *region) fill(s shape, col rgb) {
+	r.cv.fill(func(x, y float64) bool { return s((x-r.ox)/r.sz, (y-r.oy)/r.sz) }, col)
+}
+
+// fillMask pinta un color usando una máscara de cobertura (0 a 1) por píxel.
+func (c *canvas) fillMask(mask []float64, col rgb) {
+	for k, sa := range mask {
+		if sa <= 0 {
+			continue
+		}
+		if sa > 1 {
+			sa = 1
+		}
+		da := c.a[k]
+		oa := sa + da*(1-sa)
+		c.r[k] = (col.r*sa + c.r[k]*da*(1-sa)) / oa
+		c.g[k] = (col.g*sa + c.g[k]*da*(1-sa)) / oa
+		c.b[k] = (col.b*sa + c.b[k]*da*(1-sa)) / oa
+		c.a[k] = oa
+	}
+}
+
+// dilate agranda una máscara (para el contorno que separa el número del dibujo).
+func dilate(mask []float64, n int, rad float64) []float64 {
+	out := make([]float64, len(mask))
+	ri := int(math.Ceil(rad))
+	for y := 0; y < n; y++ {
+		for x := 0; x < n; x++ {
+			best := 0.0
+			for dy := -ri; dy <= ri; dy++ {
+				for dx := -ri; dx <= ri; dx++ {
+					xx, yy := x+dx, y+dy
+					if xx < 0 || yy < 0 || xx >= n || yy >= n {
+						continue
+					}
+					d := math.Hypot(float64(dx), float64(dy))
+					f := math.Max(0, math.Min(1, rad+0.5-d))
+					if v := mask[yy*n+xx] * f; v > best {
+						best = v
+					}
+				}
+			}
+			out[y*n+x] = best
+		}
+	}
+	return out
 }
 
 // ringCoverage: cuánto cubre un anillo (para el símbolo °) el píxel (px, py).

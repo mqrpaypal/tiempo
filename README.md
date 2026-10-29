@@ -12,7 +12,7 @@ Viene configurado para **Temuco, Chile**, pero puedes elegir cualquier ciudad de
 
 ## Qué hace
 
-- **Temperatura y cielo en la barra de tareas.** Junto al reloj aparece un dibujo del estado del cielo (sol, luna, nubes, lluvia, nieve, tormenta o neblina) y la temperatura con su símbolo (por ejemplo **14°**). Se actualiza cada 10 minutos.
+- **Temperatura y cielo en la barra de tareas.** Un solo ícono junto al reloj con la temperatura (por ejemplo **14°**) y, en la esquina, un dibujo del estado del cielo: sol, luna, nubes, lluvia, nieve, tormenta o neblina. Se actualiza cada 10 minutos.
 - **Panel desplegable.** Clic en el número: aparece abajo a la derecha con temperatura, sensación térmica, humedad, viento, lluvia del día, índice UV y las próximas 24 horas. Se cierra con otro clic, haciendo clic fuera o con `Esc`.
 - **Pronóstico completo.** El botón **"Ver 7 días →"** abre un panel más amplio con los próximos 7 días.
 - **Cualquier ciudad.** Con **"Cambiar ciudad"** buscas otra; el programa la recuerda.

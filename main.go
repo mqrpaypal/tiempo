@@ -226,113 +226,129 @@ func lightTaskbar() bool {
 	return v == 1
 }
 
-// Dibuja el texto (p. ej. "14°") como ícono de bandeja con fondo transparente.
-func makeTextIcon(text string) uintptr {
-	n := int32(16)
-	if r, _, _ := pGetSystemMetrics.Call(49); r > 0 { // SM_CXSMICON
-		n = int32(r)
-	}
+// inkDigits dibuja el texto con Segoe UI en negrita y devuelve su máscara recortada al trazo.
+func inkDigits(label string, h int32) (mask []float64, w, hh int) {
+	M := int32(h*2 + 8)
 	dc, _, _ := pCreateCompatibleDC.Call(0)
 	defer pDeleteDC.Call(dc)
-
-	bi := bitmapInfoHeader{biSize: 40, biWidth: n, biHeight: -n, biPlanes: 1, biBitCount: 32}
+	bi := bitmapInfoHeader{biSize: 40, biWidth: M, biHeight: -M, biPlanes: 1, biBitCount: 32}
 	var bits uintptr
 	bmp, _, _ := pCreateDIBSection.Call(dc, uintptr(unsafe.Pointer(&bi)), 0, uintptr(unsafe.Pointer(&bits)), 0, 0)
 	if bmp == 0 {
-		return 0
+		return nil, 0, 0
 	}
+	defer pDeleteObject.Call(bmp)
 	old, _, _ := pSelectObject.Call(dc, bmp)
-	pSetBkMode.Call(dc, 1) // TRANSPARENT
+	pSetBkMode.Call(dc, 1)
 	pSetTextColor.Call(dc, 0x00FFFFFF)
-
-	// Los dígitos ocupan el ancho menos el espacio del símbolo °, que se dibuja aparte.
-	label := strings.TrimSuffix(text, "°")
-	withDeg := label != text
-	degW := int32(0)
-	if withDeg {
-		degW = int32(math.Round(float64(n) * 0.30))
-		if degW < 5 {
-			degW = 5
-		}
-	}
-	avail := n - degW + 1
-	w := u16(label)
-	var font uintptr
-	fh := int32(6)
-	var tw int32
-	for h := n + 2; h >= 6; h-- {
-		f, _, _ := pCreateFont.Call(uintptr(-h), 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 4 /*ANTIALIASED*/, 0, uintptr(unsafe.Pointer(u16("Segoe UI"))))
-		o, _, _ := pSelectObject.Call(dc, f)
-		var sz sizeT
-		pGetTextExtent.Call(dc, uintptr(unsafe.Pointer(w)), uintptr(len([]rune(label))), uintptr(unsafe.Pointer(&sz)))
-		pSelectObject.Call(dc, o)
-		if sz.cx <= avail || h == 6 {
-			font, fh, tw = f, h, sz.cx
-			break
-		}
-		pDeleteObject.Call(f)
-	}
-	// Número y ° juntos, centrados como bloque.
-	gap := int32(0)
-	left := (n - (tw + degW + gap)) / 2
-	if left < 0 {
-		left = 0
-	}
-	of, _, _ := pSelectObject.Call(dc, font)
-	r := rectT{left, 0, left + tw + 2, n}
-	pDrawText.Call(dc, uintptr(unsafe.Pointer(w)), uintptr(len([]rune(label))), uintptr(unsafe.Pointer(&r)), 0x24) // LEFT|VCENTER|SINGLELINE
+	f, _, _ := pCreateFont.Call(uintptr(-h), 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 4 /*ANTIALIASED*/, 0, uintptr(unsafe.Pointer(u16("Segoe UI"))))
+	of, _, _ := pSelectObject.Call(dc, f)
+	r := rectT{2, 2, M, M}
+	w16 := u16(label)
+	pDrawText.Call(dc, uintptr(unsafe.Pointer(w16)), uintptr(len([]rune(label))), uintptr(unsafe.Pointer(&r)), 0x20) // SINGLELINE
 	pSelectObject.Call(dc, of)
-	pDeleteObject.Call(font)
+	pDeleteObject.Call(f)
 	pSelectObject.Call(dc, old)
 
-	// Convierte el texto blanco en alfa y aplica el color según el tema.
-	cr, cg, cb := byte(255), byte(255), byte(255)
-	if lightTaskbar() {
-		cr, cg, cb = 26, 26, 26
-	}
-	px := unsafe.Slice((*byte)(unsafe.Pointer(bits)), int(n*n*4))
-	for i := 0; i < len(px); i += 4 {
-		a := px[i]
-		if px[i+1] > a {
-			a = px[i+1]
+	px := unsafe.Slice((*byte)(unsafe.Pointer(bits)), int(M*M*4))
+	x0, y0, x1, y1 := int(M), int(M), -1, -1
+	for y := 0; y < int(M); y++ {
+		for x := 0; x < int(M); x++ {
+			k := (y*int(M) + x) * 4
+			if px[k] > 24 || px[k+1] > 24 || px[k+2] > 24 {
+				x0, y0 = min(x0, x), min(y0, y)
+				x1, y1 = max(x1, x), max(y1, y)
+			}
 		}
-		if px[i+2] > a {
-			a = px[i+2]
-		}
-		px[i], px[i+1], px[i+2], px[i+3] = cb, cg, cr, a
 	}
+	if x1 < 0 {
+		return nil, 0, 0
+	}
+	w, hh = x1-x0+1, y1-y0+1
+	mask = make([]float64, w*hh)
+	for y := 0; y < hh; y++ {
+		for x := 0; x < w; x++ {
+			k := ((y+y0)*int(M) + x + x0) * 4
+			v := max(px[k], px[k+1], px[k+2])
+			mask[y*w+x] = float64(v) / 255
+		}
+	}
+	return mask, w, hh
+}
 
-	// Símbolo ° como un anillo pequeño arriba, a la derecha de los dígitos.
-	if withDeg {
-		capH := float64(fh) * 0.72
-		top := float64(n)/2 - capH/2
-		rad := math.Max(1.5, float64(n)*0.10)
-		th := math.Max(1.15, float64(n)*0.075)
-		cx := float64(left+tw+gap) + rad + th/2 + 0.2
-		if lim := float64(n) - rad - th/2; cx > lim {
-			cx = lim
+// makeTrayIcon: dibujo del cielo arriba a la derecha y la temperatura con ° abajo, en un solo ícono.
+func makeTrayIcon(text string, code int, day bool) uintptr {
+	n := int(trayIconSize())
+	light := lightTaskbar()
+	cv := newCanvas(n)
+
+	// 1) Dibujo del cielo en la esquina superior derecha.
+	gs := 0.62
+	drawWeatherOn(cv, code, day, light, 1-gs, 0, gs)
+
+	// 2) Número: el más grande que quepa en la franja inferior, con espacio para el °.
+	label := strings.TrimSuffix(text, "°")
+	withDeg := label != text
+	boxTop := int(math.Round(float64(n) * 0.36))
+	boxH := n - boxTop
+	var dm []float64
+	var dw, dh int
+	for h := int32(n); h >= 6; h-- {
+		m, w, hh := inkDigits(label, h)
+		if m == nil {
+			continue
 		}
-		cy := top + rad + th/2
-		for py := 0; py < int(n); py++ {
-			for qx := 0; qx < int(n); qx++ {
-				cov := ringCoverage(qx, py, cx, cy, rad, th)
-				if cov == 0 {
-					continue
+		ring := 0
+		if withDeg {
+			ring = int(math.Ceil(float64(hh)*0.42)) + 1
+		}
+		if w+ring <= n && hh <= boxH {
+			dm, dw, dh = m, w, hh
+			break
+		}
+	}
+	ink := make([]float64, n*n)
+	if dm != nil {
+		rad := math.Max(1.4, float64(dh)*0.15)
+		th := math.Max(1.1, float64(dh)*0.11)
+		ringW := 0.0
+		if withDeg {
+			ringW = 2*rad + th + 1
+		}
+		total := float64(dw) + ringW
+		left := int(math.Floor((float64(n) - total) / 2))
+		if left < 0 {
+			left = 0
+		}
+		top := n - dh
+		for y := 0; y < dh; y++ {
+			for x := 0; x < dw; x++ {
+				if xx, yy := x+left, y+top; xx < n && yy < n {
+					ink[yy*n+xx] = dm[y*dw+x]
 				}
-				k := (py*int(n) + qx) * 4
-				if a := byte(cov * 255); a > px[k+3] {
-					px[k], px[k+1], px[k+2], px[k+3] = cb, cg, cr, a
+			}
+		}
+		if withDeg {
+			cx := float64(left+dw) + 1 + rad + th/2
+			cy := float64(top) + rad + th/2
+			for py := 0; py < n; py++ {
+				for qx := 0; qx < n; qx++ {
+					if cov := ringCoverage(qx, py, cx, cy, rad, th); cov > ink[py*n+qx] {
+						ink[py*n+qx] = cov
+					}
 				}
 			}
 		}
 	}
 
-	mask, _, _ := pCreateBitmap.Call(uintptr(n), uintptr(n), 1, 1, 0)
-	ii := iconInfo{fIcon: 1, hbmMask: mask, hbmColor: bmp}
-	icon, _, _ := pCreateIconIndirect.Call(uintptr(unsafe.Pointer(&ii)))
-	pDeleteObject.Call(mask)
-	pDeleteObject.Call(bmp)
-	return icon
+	// 3) Contorno del color de la barra para separar el número del dibujo, y luego el número.
+	fg, halo := hex(0xFFFFFF), hex(0x1C1C1C)
+	if light {
+		fg, halo = hex(0x1A1A1A), hex(0xF0F0F0)
+	}
+	cv.fillMask(dilate(ink, n, math.Max(1, float64(n)/18)), halo)
+	cv.fillMask(ink, fg)
+	return iconFromPixels(int32(n), cv.bgra())
 }
 
 // iconFromPixels crea un ícono de Windows a partir de píxeles BGRA.
@@ -362,8 +378,6 @@ func trayIconSize() int32 {
 }
 
 var (
-	nidSky     notifyIconData
-	skyIcon    uintptr
 	nid        notifyIconData
 	curIcon    uintptr
 	taskbarMsg uintptr
@@ -393,7 +407,7 @@ func updateTray(add bool) {
 	} else if e {
 		tip = p.Name + ": sin conexión"
 	}
-	icon := makeTextIcon(label)
+	icon := makeTrayIcon(label, map[bool]int{true: -1, false: c}[math.IsNaN(t)], day)
 
 	nid.cbSize = uint32(unsafe.Sizeof(nid))
 	nid.hWnd = hwndMain
@@ -417,23 +431,6 @@ func updateTray(add bool) {
 	}
 	curIcon = icon
 
-	// Segundo ícono: dibujo del estado del cielo, a la izquierda del número.
-	sz := trayIconSize()
-	code := c
-	if math.IsNaN(t) {
-		code = -1
-	}
-	sky := iconFromPixels(sz, drawWeather(int(sz), code, day, lightTaskbar()))
-	nidSky = nid
-	nidSky.uID = 2
-	nidSky.hIcon = sky
-	if r, _, _ := pShellNotifyIcon.Call(op, uintptr(unsafe.Pointer(&nidSky))); r == 0 && !add {
-		pShellNotifyIcon.Call(nimAdd, uintptr(unsafe.Pointer(&nidSky)))
-	}
-	if skyIcon != 0 {
-		pDestroyIcon.Call(skyIcon)
-	}
-	skyIcon = sky
 }
 
 // En Windows 11 los íconos nuevos quedan ocultos tras la flecha "^"; esto lo deja visible.
@@ -575,7 +572,6 @@ func wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 		return 0
 	case msg == wmDestroy:
 		pShellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&nid)))
-		pShellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&nidSky)))
 		pPostQuitMessage.Call(0)
 		return 0
 	}
@@ -765,6 +761,9 @@ func main() {
 		}
 	}
 
+	old2 := notifyIconData{hWnd: hwndMain, uID: 2}
+	old2.cbSize = uint32(unsafe.Sizeof(old2))
+	pShellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&old2)))
 	updateTray(true)
 	time.AfterFunc(3*time.Second, promoteTrayIcon)
 	go fetchWeather()
