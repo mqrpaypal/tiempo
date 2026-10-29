@@ -388,6 +388,12 @@ $("form").onsubmit = async e => {
 };
 
 const ocultar = () => fetch("/api/ocultar", {method:"POST"}).catch(()=>{});
+// Sin zoom: Ctrl + rueda, Ctrl + / Ctrl - y pellizco descuadraban el panel.
+window.addEventListener("wheel", e => { if (e.ctrlKey) e.preventDefault(); }, {passive:false});
+window.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && ["+","-","=","0","_"].includes(e.key)) e.preventDefault();
+});
+document.addEventListener("gesturestart", e => e.preventDefault());
 const reportHeight = (path) => {
   const wrap = document.querySelector(".wrap"); let last = 0;
   new ResizeObserver(() => {

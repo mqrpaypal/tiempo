@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"syscall"
 	"time"
 	"unsafe"
 
 	webview2 "github.com/jchv/go-webview2"
+	"github.com/jchv/go-webview2/pkg/edge"
 )
 
 const (
@@ -127,7 +129,7 @@ func (f *flyout) create() bool {
 			}
 		}()
 		f.wv = webview2.NewWithOptions(webview2.WebViewOptions{
-			DataPath:      dataDir + `\webview2`,
+			DataPath:      dataDir + `\webview2-v2`,
 			AutoFocus:     true,
 			WindowOptions: webview2.WindowOptions{Title: "Tiempo Temuco", Width: 1, Height: 1},
 		})
@@ -141,6 +143,7 @@ func (f *flyout) create() bool {
 	}
 	logf("panel %s creado", f.query)
 	f.hwnd = uintptr(f.wv.Window())
+	disableZoom(f.wv)
 	pShowWindow.Call(f.hwnd, 0) // SW_HIDE
 
 	// Ventana emergente sin bordes, sin botón en la barra de tareas y siempre encima.
@@ -303,5 +306,32 @@ func setPanelHeight(h int, side bool) {
 	f.cssH = h
 	if f.visible() {
 		f.place()
+	}
+}
+
+// disableZoom desactiva el zoom con Ctrl + rueda, Ctrl + / Ctrl - y el gesto de pellizco,
+// que descuadraban el panel. La librería no expone esta opción, así que se accede a ella aquí.
+func disableZoom(wv webview2.WebView) {
+	defer func() {
+		if r := recover(); r != nil {
+			logf("no se pudo desactivar el zoom: %v", r)
+		}
+	}()
+	v := reflect.ValueOf(wv)
+	if v.Kind() != reflect.Ptr {
+		return
+	}
+	fv := v.Elem().FieldByName("browser")
+	if !fv.IsValid() {
+		return
+	}
+	b := reflect.NewAt(fv.Type(), unsafe.Pointer(fv.UnsafeAddr())).Elem().Interface()
+	ch, ok := b.(*edge.Chromium)
+	if !ok {
+		return
+	}
+	if st, err := ch.GetSettings(); err == nil && st != nil {
+		st.PutIsZoomControlEnabled(false)
+		st.PutIsPinchZoomEnabled(false)
 	}
 }
