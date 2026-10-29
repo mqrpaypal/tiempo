@@ -43,6 +43,7 @@ var (
 	curTemp  = math.NaN()
 	curFeels = math.NaN()
 	curCode  = -1
+	curDay   = true
 	curErr   bool
 	dataDir  string
 	hwndMain uintptr
@@ -244,40 +245,44 @@ func makeTextIcon(text string) uintptr {
 	pSetBkMode.Call(dc, 1) // TRANSPARENT
 	pSetTextColor.Call(dc, 0x00FFFFFF)
 
-	// Busca el mayor tamaño de letra que quepa; quita el "°" si achica mucho el número.
-	fit := func(s string) (int32, uintptr) {
-		w := u16(s)
-		for h := n + 2; h >= 6; h-- {
-			f, _, _ := pCreateFont.Call(uintptr(-h), 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 4 /*ANTIALIASED*/, 0, uintptr(unsafe.Pointer(u16("Segoe UI"))))
-			o, _, _ := pSelectObject.Call(dc, f)
-			var sz sizeT
-			pGetTextExtent.Call(dc, uintptr(unsafe.Pointer(w)), uintptr(len([]rune(s))), uintptr(unsafe.Pointer(&sz)))
-			pSelectObject.Call(dc, o)
-			if sz.cx <= n+1 {
-				return h, f
-			}
-			pDeleteObject.Call(f)
-		}
-		return 6, 0
-	}
-	label := text
-	h1, f1 := fit(text)
-	if strings.HasSuffix(text, "°") {
-		bare := strings.TrimSuffix(text, "°")
-		h2, f2 := fit(bare)
-		if float64(h1) < 0.8*float64(h2) {
-			pDeleteObject.Call(f1)
-			f1, label = f2, bare
-		} else {
-			pDeleteObject.Call(f2)
+	// Los dígitos ocupan el ancho menos el espacio del símbolo °, que se dibuja aparte.
+	label := strings.TrimSuffix(text, "°")
+	withDeg := label != text
+	degW := int32(0)
+	if withDeg {
+		degW = int32(math.Round(float64(n) * 0.30))
+		if degW < 5 {
+			degW = 5
 		}
 	}
-	of, _, _ := pSelectObject.Call(dc, f1)
-	r := rectT{-2, 0, n + 2, n}
+	avail := n - degW + 1
 	w := u16(label)
-	pDrawText.Call(dc, uintptr(unsafe.Pointer(w)), uintptr(len([]rune(label))), uintptr(unsafe.Pointer(&r)), 0x25) // CENTER|VCENTER|SINGLELINE
+	var font uintptr
+	fh := int32(6)
+	var tw int32
+	for h := n + 2; h >= 6; h-- {
+		f, _, _ := pCreateFont.Call(uintptr(-h), 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 4 /*ANTIALIASED*/, 0, uintptr(unsafe.Pointer(u16("Segoe UI"))))
+		o, _, _ := pSelectObject.Call(dc, f)
+		var sz sizeT
+		pGetTextExtent.Call(dc, uintptr(unsafe.Pointer(w)), uintptr(len([]rune(label))), uintptr(unsafe.Pointer(&sz)))
+		pSelectObject.Call(dc, o)
+		if sz.cx <= avail || h == 6 {
+			font, fh, tw = f, h, sz.cx
+			break
+		}
+		pDeleteObject.Call(f)
+	}
+	// Número y ° juntos, centrados como bloque.
+	gap := int32(0)
+	left := (n - (tw + degW + gap)) / 2
+	if left < 0 {
+		left = 0
+	}
+	of, _, _ := pSelectObject.Call(dc, font)
+	r := rectT{left, 0, left + tw + 2, n}
+	pDrawText.Call(dc, uintptr(unsafe.Pointer(w)), uintptr(len([]rune(label))), uintptr(unsafe.Pointer(&r)), 0x24) // LEFT|VCENTER|SINGLELINE
 	pSelectObject.Call(dc, of)
-	pDeleteObject.Call(f1)
+	pDeleteObject.Call(font)
 	pSelectObject.Call(dc, old)
 
 	// Convierte el texto blanco en alfa y aplica el color según el tema.
@@ -297,6 +302,31 @@ func makeTextIcon(text string) uintptr {
 		px[i], px[i+1], px[i+2], px[i+3] = cb, cg, cr, a
 	}
 
+	// Símbolo ° como un anillo pequeño arriba, a la derecha de los dígitos.
+	if withDeg {
+		capH := float64(fh) * 0.72
+		top := float64(n)/2 - capH/2
+		rad := math.Max(1.5, float64(n)*0.10)
+		th := math.Max(1.15, float64(n)*0.075)
+		cx := float64(left+tw+gap) + rad + th/2 + 0.2
+		if lim := float64(n) - rad - th/2; cx > lim {
+			cx = lim
+		}
+		cy := top + rad + th/2
+		for py := 0; py < int(n); py++ {
+			for qx := 0; qx < int(n); qx++ {
+				cov := ringCoverage(qx, py, cx, cy, rad, th)
+				if cov == 0 {
+					continue
+				}
+				k := (py*int(n) + qx) * 4
+				if a := byte(cov * 255); a > px[k+3] {
+					px[k], px[k+1], px[k+2], px[k+3] = cb, cg, cr, a
+				}
+			}
+		}
+	}
+
 	mask, _, _ := pCreateBitmap.Call(uintptr(n), uintptr(n), 1, 1, 0)
 	ii := iconInfo{fIcon: 1, hbmMask: mask, hbmColor: bmp}
 	icon, _, _ := pCreateIconIndirect.Call(uintptr(unsafe.Pointer(&ii)))
@@ -305,7 +335,35 @@ func makeTextIcon(text string) uintptr {
 	return icon
 }
 
+// iconFromPixels crea un ícono de Windows a partir de píxeles BGRA.
+func iconFromPixels(n int32, pix []byte) uintptr {
+	dc, _, _ := pCreateCompatibleDC.Call(0)
+	defer pDeleteDC.Call(dc)
+	bi := bitmapInfoHeader{biSize: 40, biWidth: n, biHeight: -n, biPlanes: 1, biBitCount: 32}
+	var bits uintptr
+	bmp, _, _ := pCreateDIBSection.Call(dc, uintptr(unsafe.Pointer(&bi)), 0, uintptr(unsafe.Pointer(&bits)), 0, 0)
+	if bmp == 0 {
+		return 0
+	}
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(bits)), int(n*n*4)), pix)
+	mask, _, _ := pCreateBitmap.Call(uintptr(n), uintptr(n), 1, 1, 0)
+	ii := iconInfo{fIcon: 1, hbmMask: mask, hbmColor: bmp}
+	icon, _, _ := pCreateIconIndirect.Call(uintptr(unsafe.Pointer(&ii)))
+	pDeleteObject.Call(mask)
+	pDeleteObject.Call(bmp)
+	return icon
+}
+
+func trayIconSize() int32 {
+	if r, _, _ := pGetSystemMetrics.Call(49); r > 0 { // SM_CXSMICON
+		return int32(r)
+	}
+	return 16
+}
+
 var (
+	nidSky     notifyIconData
+	skyIcon    uintptr
 	nid        notifyIconData
 	curIcon    uintptr
 	taskbarMsg uintptr
@@ -322,7 +380,7 @@ var codes = map[int]string{
 
 func updateTray(add bool) {
 	mu.Lock()
-	t, f, c, e, p := curTemp, curFeels, curCode, curErr, place
+	t, f, c, e, p, day := curTemp, curFeels, curCode, curErr, place, curDay
 	mu.Unlock()
 
 	label, tip := "--", p.Name+": cargando…"
@@ -358,6 +416,24 @@ func updateTray(add bool) {
 		pDestroyIcon.Call(curIcon)
 	}
 	curIcon = icon
+
+	// Segundo ícono: dibujo del estado del cielo, a la izquierda del número.
+	sz := trayIconSize()
+	code := c
+	if math.IsNaN(t) {
+		code = -1
+	}
+	sky := iconFromPixels(sz, drawWeather(int(sz), code, day, lightTaskbar()))
+	nidSky = nid
+	nidSky.uID = 2
+	nidSky.hIcon = sky
+	if r, _, _ := pShellNotifyIcon.Call(op, uintptr(unsafe.Pointer(&nidSky))); r == 0 && !add {
+		pShellNotifyIcon.Call(nimAdd, uintptr(unsafe.Pointer(&nidSky)))
+	}
+	if skyIcon != 0 {
+		pDestroyIcon.Call(skyIcon)
+	}
+	skyIcon = sky
 }
 
 // En Windows 11 los íconos nuevos quedan ocultos tras la flecha "^"; esto lo deja visible.
@@ -499,6 +575,7 @@ func wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 		return 0
 	case msg == wmDestroy:
 		pShellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&nid)))
+		pShellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&nidSky)))
 		pPostQuitMessage.Call(0)
 		return 0
 	}
@@ -517,13 +594,14 @@ func fetchWeather() {
 	p := place
 	mu.Unlock()
 	u := fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%f&longitude=%f"+
-		"&current=temperature_2m,apparent_temperature,weather_code&timezone=auto", p.Lat, p.Lon)
+		"&current=temperature_2m,apparent_temperature,weather_code,is_day&timezone=auto", p.Lat, p.Lon)
 	cl := http.Client{Timeout: 20 * time.Second}
 	var out struct {
 		Current struct {
 			T float64 `json:"temperature_2m"`
 			F float64 `json:"apparent_temperature"`
 			C int     `json:"weather_code"`
+			D int     `json:"is_day"`
 		} `json:"current"`
 	}
 	resp, err := cl.Get(u)
@@ -536,6 +614,7 @@ func fetchWeather() {
 		curErr = err != nil
 	} else {
 		curTemp, curFeels, curCode, curErr = out.Current.T, out.Current.F, out.Current.C, false
+		curDay = out.Current.D == 1
 	}
 	failed := curErr
 	mu.Unlock()
