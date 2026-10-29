@@ -45,6 +45,7 @@ type flyout struct {
 	cssH    int // solo panel del reloj (alto según contenido)
 	side    bool
 	wv      webview2.WebView
+	ch      *edge.Chromium
 	hwnd    uintptr
 	oldProc uintptr
 	making  bool
@@ -144,6 +145,7 @@ func (f *flyout) create() bool {
 	logf("panel %s creado", f.query)
 	f.hwnd = uintptr(f.wv.Window())
 	disableZoom(f.wv)
+	f.ch = chromiumOf(f.wv)
 	pShowWindow.Call(f.hwnd, 0) // SW_HIDE
 
 	// Ventana emergente sin bordes, sin botón en la barra de tareas y siempre encima.
@@ -245,6 +247,9 @@ func (f *flyout) show() bool {
 		return false
 	}
 	f.place()
+	if f.ch != nil {
+		f.ch.Show() // la página vuelve a estar visible: reanuda las animaciones
+	}
 	pShowWindow.Call(f.hwnd, 5) // SW_SHOW
 	pSetForegroundWindow.Call(f.hwnd)
 	if time.Since(f.loaded) > 5*time.Minute { // datos frescos
@@ -257,6 +262,9 @@ func (f *flyout) show() bool {
 func (f *flyout) hide() {
 	if f.visible() {
 		pShowWindow.Call(f.hwnd, 0)
+		if f.ch != nil {
+			f.ch.Hide() // la página queda oculta: las animaciones se detienen
+		}
 		f.hidAt = time.Now()
 	}
 }
@@ -311,23 +319,29 @@ func setPanelHeight(h int, side bool) {
 
 // disableZoom desactiva el zoom con Ctrl + rueda, Ctrl + / Ctrl - y el gesto de pellizco,
 // que descuadraban el panel. La librería no expone esta opción, así que se accede a ella aquí.
-func disableZoom(wv webview2.WebView) {
+func chromiumOf(wv webview2.WebView) (ch *edge.Chromium) {
 	defer func() {
 		if r := recover(); r != nil {
-			logf("no se pudo desactivar el zoom: %v", r)
+			logf("no se pudo acceder al navegador del panel: %v", r)
+			ch = nil
 		}
 	}()
 	v := reflect.ValueOf(wv)
 	if v.Kind() != reflect.Ptr {
-		return
+		return nil
 	}
 	fv := v.Elem().FieldByName("browser")
 	if !fv.IsValid() {
-		return
+		return nil
 	}
 	b := reflect.NewAt(fv.Type(), unsafe.Pointer(fv.UnsafeAddr())).Elem().Interface()
-	ch, ok := b.(*edge.Chromium)
-	if !ok {
+	ch, _ = b.(*edge.Chromium)
+	return ch
+}
+
+func disableZoom(wv webview2.WebView) {
+	ch := chromiumOf(wv)
+	if ch == nil {
 		return
 	}
 	if st, err := ch.GetSettings(); err == nil && st != nil {

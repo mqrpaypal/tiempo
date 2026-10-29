@@ -37,32 +37,17 @@
 .sky-storm-n   {--sky-top:#2a2d3e; --sky-mid:#1b1d29; --sky-bot:#0e0f16}
 .sky-golden    {--sky-top:#e3955c; --sky-mid:#a65d6e; --sky-bot:#3a2e57}
 
+@property --sky-top{syntax:"<color>";inherits:true;initial-value:#5b6f8f}
+@property --sky-mid{syntax:"<color>";inherits:true;initial-value:#3d4d68}
+@property --sky-bot{syntax:"<color>";inherits:true;initial-value:#26303f}
+:root{transition:--sky-top 2s ease,--sky-mid 2s ease,--sky-bot 2s ease}
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%;color:var(--fg);font-family:var(--body);font-size:15px;overflow-x:hidden}
 html{background:var(--sky-bot)}
 body{position:relative;background:linear-gradient(175deg,var(--sky-top) 0%,var(--sky-mid) 48%,var(--sky-bot) 100%);
-  transition:background .6s ease}
-/* Capa de clima: lluvia, nieve, estrellas o neblina */
-body::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:0}
-.fx-rain body::before{opacity:.32;
-  background:repeating-linear-gradient(105deg,transparent 0 9px,rgba(255,255,255,.2) 9px 10px,transparent 10px 23px);
-  animation:rain 1.4s linear infinite}
-.fx-drizzle body::before{opacity:.2;
-  background:repeating-linear-gradient(105deg,transparent 0 13px,rgba(255,255,255,.2) 13px 14px,transparent 14px 31px);
-  animation:rain 2.2s linear infinite}
-.fx-snow body::before{opacity:.55;
-  background-image:radial-gradient(circle,rgba(255,255,255,.9) 0 1.4px,transparent 2px),radial-gradient(circle,rgba(255,255,255,.6) 0 1px,transparent 1.6px);
-  background-size:38px 38px,23px 23px;background-position:0 0,11px 7px;animation:snow 9s linear infinite}
-.fx-stars body::before{opacity:.7;
-  background-image:radial-gradient(circle,rgba(255,255,255,.85) 0 .8px,transparent 1.4px),radial-gradient(circle,rgba(255,255,255,.5) 0 .6px,transparent 1.2px);
-  background-size:71px 53px,37px 41px;background-position:5px 9px,21px 3px;
-  -webkit-mask-image:linear-gradient(#000 0%,transparent 70%);mask-image:linear-gradient(#000 0%,transparent 70%)}
-.fx-fog body::before{opacity:.45;
-  background:repeating-linear-gradient(180deg,transparent 0 26px,rgba(255,255,255,.14) 26px 44px,transparent 44px 70px);
-  filter:blur(6px)}
-@keyframes rain{from{background-position:0 0}to{background-position:-46px 120px}}
-@keyframes snow{from{background-position:0 0,11px 7px}to{background-position:-20px 380px,-4px 230px}}
-@media (prefers-reduced-motion:reduce){body::before{animation:none!important}}
+}
+/* Capa de animaciones del cielo (canvas detrás del contenido) */
+#skyfx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;display:block}
 
 .wrap{position:relative;z-index:1;max-width:520px;margin:0 auto;padding:18px 18px 18px;display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
 .wrap>*{min-width:0}
@@ -142,6 +127,7 @@ html.lateral .more{display:none}
 </style>
 </head>
 <body>
+<canvas id="skyfx" aria-hidden="true"></canvas>
 <div class="wrap">
   <header>
     <div>
@@ -218,6 +204,363 @@ html.lateral .more{display:none}
 </svg>
 
 <script>
+// Motor de animaciones del cielo de Tiempo Temuco.
+// Dibuja en un canvas detrás del contenido: lluvia con profundidad, gotas en el vidrio,
+// tormenta, rayos de sol, nubes, neblina, noche estrellada, nieve y atardecer.
+// Cambia de escena con un fundido, se apaga con "animaciones desactivadas" de Windows,
+// va a 30 cuadros por segundo como máximo y se detiene cuando el panel está cerrado.
+(() => {
+  const cv = document.getElementById("skyfx");
+  if (!cv) return;
+  const ctx = cv.getContext("2d");
+  const motion = matchMedia("(prefers-reduced-motion: reduce)");
+  const R = (a, b) => a + Math.random() * (b - a);
+  const TAU = Math.PI * 2;
+  let W = 0, H = 0, F = 1; // F: opacidad global de la capa que se está dibujando
+
+  // ---------- Sprites de nubes (se dibujan una vez) ----------
+  function cloudSprite(scale, rgb) {
+    const c = document.createElement("canvas"), w = Math.round(260 * scale), h = Math.round(110 * scale);
+    c.width = w; c.height = h;
+    const g = c.getContext("2d");
+    for (let i = 0; i < 16; i++) {
+      const x = R(.18, .82) * w, y = R(.45, .7) * h, r = R(.16, .3) * h * 1.6;
+      const gr = g.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, `rgba(${rgb},.55)`); gr.addColorStop(1, `rgba(${rgb},0)`);
+      g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+    }
+    return c;
+  }
+
+  // ---------- Capas ----------
+  // Cada capa: { init(), draw(dt) }. Usan W, H, ctx y F.
+  const layers = {
+    // A · Lluvia con profundidad (rate 1–10, wind −1..1)
+    rain(opt) {
+      const L = [{ sp: 520, len: 12, a: .16, lw: .8 }, { sp: 760, len: 18, a: .26, lw: 1.1 }, { sp: 1050, len: 26, a: .42, lw: 1.4 }];
+      let drops = [], splash = [];
+      return {
+        init() { drops = []; splash = []; },
+        draw(dt) {
+          const want = Math.round(14 + opt.rate * 15), wind = opt.wind;
+          while (drops.length < want) drops.push({ L: Math.floor(R(0, 3)), x: R(-W * .3, W * 1.3), y: R(-H, H) });
+          if (drops.length > want) drops.length = want;
+          ctx.lineCap = "round";
+          for (const d of drops) {
+            const l = L[d.L], vx = l.sp * wind * .55, vy = l.sp;
+            d.x += vx * dt; d.y += vy * dt;
+            const ex = d.x - vx / vy * l.len, ey = d.y - l.len;
+            const g = ctx.createLinearGradient(ex, ey, d.x, d.y);
+            g.addColorStop(0, "rgba(220,235,255,0)"); g.addColorStop(1, `rgba(220,235,255,${l.a * F})`);
+            ctx.strokeStyle = g; ctx.lineWidth = l.lw;
+            ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(d.x, d.y); ctx.stroke();
+            if (d.y > H) {
+              if (d.L === 2 && Math.random() < .7) splash.push({ x: d.x, y: H - R(2, 10), t: 0 });
+              d.y = R(-40, -10); d.x = R(-W * .4 * Math.max(0, wind) - 10, W + 10 - W * .4 * Math.min(0, wind));
+            }
+          }
+          for (const p of splash) {
+            p.t += dt; const k = p.t / .35;
+            ctx.strokeStyle = `rgba(220,235,255,${.35 * (1 - k) * F})`; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.ellipse(p.x, p.y, 2 + k * 9, 1 + k * 2.2, 0, Math.PI, TAU); ctx.stroke();
+          }
+          splash = splash.filter(p => p.t < .35);
+        }
+      };
+    },
+
+    // B · Gotas en el vidrio
+    glass() {
+      let still = [], run = [], next = .3;
+      const drop = (x, y, r) => {
+        const g = ctx.createRadialGradient(x - r * .3, y - r * .3, r * .1, x, y, r);
+        g.addColorStop(0, `rgba(255,255,255,${.35 * F})`); g.addColorStop(.6, `rgba(200,220,245,${.1 * F})`); g.addColorStop(1, `rgba(255,255,255,${.32 * F})`);
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+        ctx.fillStyle = `rgba(10,20,35,${.18 * F})`; ctx.beginPath(); ctx.arc(x + r * .15, y + r * .35, r * .75, 0, Math.PI); ctx.fill();
+      };
+      return {
+        init() { still = [...Array(Math.round(W * H / 2600))].map(() => ({ x: R(0, W), y: R(0, H), r: R(.8, 2.4) })); run = []; },
+        draw(dt) {
+          next -= dt;
+          if (next <= 0 && run.length < 5) { next = R(.8, 2); run.push({ x: R(10, W - 10), y: R(-10, H * .4), r: R(3, 5), v: R(25, 70), trail: [] }); }
+          for (const d of run) {
+            d.y += d.v * dt; d.x += Math.sin(d.y * .05) * .15; d.v = Math.min(160, d.v + dt * R(-20, 60));
+            if (Math.random() < dt * 9 && d.trail.length < 40) d.trail.push({ x: d.x + R(-1, 1), y: d.y - d.r, r: R(.7, 1.5) });
+          }
+          run = run.filter(d => d.y < H + 10);
+          for (const d of still) drop(d.x, d.y, d.r);
+          for (const d of run) { for (const t of d.trail) drop(t.x, t.y, t.r); drop(d.x, d.y, d.r); }
+        }
+      };
+    },
+
+    // C · Relámpagos
+    lightning() {
+      let next = R(1.5, 4), t = -1, bolt = null;
+      const makeBolt = (x, end) => { const p = [[x, 0]]; let cx = x, cy = 0; while (cy < end) { cy += R(10, 22); cx += R(-14, 14); p.push([cx, cy]); } return p; };
+      return {
+        init() { next = R(1.5, 4); t = -1; },
+        draw(dt) {
+          next -= dt;
+          if (next <= 0) { next = R(4, 9); t = 0; bolt = makeBolt(R(W * .25, W * .85), H * R(.5, .8)); }
+          if (t < 0) return;
+          t += dt;
+          const f = t < .08 ? 1 : t < .16 ? .25 : t < .26 ? .85 : Math.max(0, 1 - (t - .26) / .5);
+          ctx.fillStyle = `rgba(210,220,255,${.42 * f * F})`; ctx.fillRect(0, 0, W, H);
+          if (bolt && t < .45) {
+            ctx.save(); ctx.strokeStyle = `rgba(255,255,255,${f * F})`; ctx.shadowColor = "#b9c8ff"; ctx.shadowBlur = 14; ctx.lineWidth = 2;
+            ctx.beginPath(); bolt.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke(); ctx.restore();
+          }
+          if (t > 1) t = -1;
+        }
+      };
+    },
+
+    // D · Rayos de sol
+    sun(opt) {
+      let a = 0, motes = [];
+      return {
+        init() { motes = [...Array(24)].map(() => ({ x: R(0, W), y: R(0, H), v: R(4, 12), p: R(0, TAU), r: R(.8, 2) })); },
+        draw(dt) {
+          a += dt * .05;
+          const s = opt.strength, cx = W * .86, cy = -H * .12, len = Math.hypot(W, H) * 1.2;
+          ctx.save(); ctx.globalCompositeOperation = "lighter";
+          for (let i = 0; i < 11; i++) {
+            const ang = a + i * TAU / 11 * .5 + .9, sp = .07 + .03 * Math.sin(i * 1.7);
+            const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, len);
+            g.addColorStop(0, `rgba(255,240,200,${.085 * s * F})`); g.addColorStop(1, "rgba(255,240,200,0)");
+            ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, len, ang - sp, ang + sp); ctx.closePath(); ctx.fill();
+          }
+          const pulse = 1 + Math.sin(performance.now() / 1400) * .06, by = cy + H * .12;
+          const bloom = ctx.createRadialGradient(cx, by, 0, cx, by, H * .75 * pulse);
+          bloom.addColorStop(0, `rgba(255,236,190,${.24 * s * F})`); bloom.addColorStop(1, "rgba(255,236,190,0)");
+          ctx.fillStyle = bloom; ctx.fillRect(0, 0, W, H);
+          for (const m of motes) {
+            m.y -= m.v * dt; m.p += dt; if (m.y < -5) { m.y = H + 5; m.x = R(0, W); }
+            ctx.fillStyle = `rgba(255,250,225,${(.22 + .22 * Math.sin(m.p * 2)) * s * F})`;
+            ctx.beginPath(); ctx.arc(m.x + Math.sin(m.p) * 6, m.y, m.r, 0, TAU); ctx.fill();
+          }
+          ctx.restore();
+        }
+      };
+    },
+
+    // E · Nubes que pasan
+    clouds(opt) {
+      let cs = [];
+      return {
+        init() {
+          cs = [0, 1, 2].flatMap(L => [...Array(3)].map(() => ({
+            L, x: R(-W * .3, W), y: R(.04, .5) * H + L * H * .08, sp: [6, 12, 22][L] * (opt.wind < 0 ? -1 : 1),
+            img: cloudSprite([.6, .85, 1.15][L], opt.rgb), a: [.32, .46, .62][L] * opt.alpha
+          })));
+        },
+        draw(dt) {
+          for (const c of cs) {
+            c.x += c.sp * dt;
+            if (c.sp > 0 && c.x > W + 20) c.x = -c.img.width - R(0, 60);
+            if (c.sp < 0 && c.x < -c.img.width - 20) c.x = W + R(0, 60);
+            ctx.globalAlpha = c.a * F; ctx.drawImage(c.img, c.x, c.y - c.img.height / 2);
+          }
+          ctx.globalAlpha = 1;
+        }
+      };
+    },
+
+    // F · Neblina
+    fog() {
+      let b = [];
+      return {
+        init() { b = [...Array(9)].map((_, i) => ({ x: R(-W, W), y: H * (.22 + i * .088), sp: R(5, 14) * (i % 2 ? 1 : -1), img: cloudSprite(R(1, 1.6), "235,240,245"), a: R(.18, .3) })); },
+        draw(dt) {
+          for (const f of b) {
+            f.x += f.sp * dt; if (f.x > W + 40) f.x = -f.img.width; if (f.x < -f.img.width - 40) f.x = W;
+            ctx.globalAlpha = f.a * F; ctx.drawImage(f.img, f.x, f.y - f.img.height / 2, f.img.width, f.img.height * .7);
+          }
+          ctx.globalAlpha = 1;
+          const g = ctx.createLinearGradient(0, H * .45, 0, H);
+          g.addColorStop(0, "rgba(230,236,242,0)"); g.addColorStop(1, `rgba(230,236,242,${.26 * F})`);
+          ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+        }
+      };
+    },
+
+    // G · Noche estrellada
+    stars() {
+      let st = [], shoot = null, next = R(2, 5);
+      return {
+        init() { st = [...Array(Math.round(W * H / 1300))].map(() => ({ x: R(0, W), y: R(0, H * .85), r: R(.4, 1.5), p: R(0, TAU), f: R(.6, 2.2) })); },
+        draw(dt) {
+          const mx = W * .82, my = H * .16, mg = ctx.createRadialGradient(mx, my, 0, mx, my, H * .6);
+          mg.addColorStop(0, `rgba(242,214,117,${.2 * F})`); mg.addColorStop(1, "rgba(242,214,117,0)");
+          ctx.fillStyle = mg; ctx.fillRect(0, 0, W, H);
+          for (const t of st) {
+            t.p += dt * t.f; const a = .35 + .55 * (.5 + .5 * Math.sin(t.p));
+            ctx.fillStyle = `rgba(255,255,255,${a * (1 - t.y / H * .6) * F})`; ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, TAU); ctx.fill();
+          }
+          next -= dt;
+          if (next <= 0 && !shoot) { shoot = { x: R(W * .1, W * .6), y: R(5, H * .3), t: 0 }; next = R(6, 12); }
+          if (shoot) {
+            const k = shoot.t / .9; shoot.t += dt;
+            const x = shoot.x + k * W * .45, y = shoot.y + k * H * .22, a = Math.sin(Math.min(1, k) * Math.PI);
+            const g = ctx.createLinearGradient(x, y, x - 60, y - 30);
+            g.addColorStop(0, `rgba(255,255,255,${a * F})`); g.addColorStop(1, "rgba(255,255,255,0)");
+            ctx.strokeStyle = g; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 60, y - 30); ctx.stroke();
+            if (k >= 1) shoot = null;
+          }
+        }
+      };
+    },
+
+    // H · Nieve que se mece
+    snow(opt) {
+      let fl = [];
+      return {
+        init() { fl = [...Array(90)].map(() => { const z = Math.random(); return { x: R(0, W), y: R(-H, H), z, r: .8 + z * 2.8, v: 14 + z * 42, amp: 6 + z * 16, p: R(0, TAU) }; }).sort((a, b) => a.z - b.z); },
+        draw(dt) {
+          for (const f of fl) {
+            f.y += f.v * dt; f.p += dt * (.6 + f.z * .6); if (f.y > H + 6) { f.y = -6; f.x = R(0, W); }
+            const x = f.x + Math.sin(f.p) * f.amp + opt.wind * 20 * f.z;
+            ctx.fillStyle = `rgba(255,255,255,${(.45 + f.z * .45) * F})`;
+            if (f.z > .82) { ctx.save(); ctx.shadowColor = "rgba(255,255,255,.9)"; ctx.shadowBlur = 6; }
+            ctx.beginPath(); ctx.arc(x, f.y, f.r, 0, TAU); ctx.fill();
+            if (f.z > .82) ctx.restore();
+          }
+        }
+      };
+    },
+
+    // I · Atardecer vivo
+    sunset() {
+      let t = 0, cs = [];
+      return {
+        init() { cs = [...Array(4)].map((_, i) => ({ x: R(-W, W), y: H * (.16 + i * .1), sp: R(4, 9), img: cloudSprite(R(.7, 1.1), "255,190,200") })); },
+        draw(dt) {
+          t += dt;
+          const sx = W * .2, sy = H * (1.03 + Math.sin(t / 9) * .02), pulse = 1 + Math.sin(t * .9) * .08;
+          const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, H * .95 * pulse);
+          glow.addColorStop(0, `rgba(255,214,140,${.7 * F})`); glow.addColorStop(.25, `rgba(255,170,110,${.32 * F})`); glow.addColorStop(1, "rgba(255,150,120,0)");
+          ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+          ctx.fillStyle = `rgba(255,217,138,${.85 * F})`; ctx.beginPath(); ctx.arc(sx, sy, H * .09, 0, TAU); ctx.fill();
+          for (const c of cs) {
+            c.x += c.sp * dt; if (c.x > W + 20) c.x = -c.img.width;
+            ctx.globalAlpha = .5 * F; ctx.drawImage(c.img, c.x, c.y - c.img.height * .25, c.img.width, c.img.height * .45);
+          }
+          ctx.globalAlpha = 1;
+        }
+      };
+    }
+  };
+
+  // ---------- Escena según el tiempo ----------
+  // info: {kind, isDay, golden, code, wind (km/h), windDir (°), precip (mm)}
+  function buildScene(info) {
+    // K · el viento viene DESDE windDir: del oeste (270°) empuja la lluvia hacia la derecha
+    const w = Math.max(-1, Math.min(1, (info.wind || 0) / 45)) * -Math.sin((info.windDir || 0) * Math.PI / 180);
+    const precipRate = Math.max(1, Math.min(10, Math.round(1 + (info.precip || 0) * 3)));
+    const L = [];
+    switch (info.kind) {
+      case "storm":
+        L.push(layers.rain({ rate: Math.max(8, precipRate), wind: Math.max(-1, Math.min(1, w * 1.4 || .4)) }), layers.lightning()); break;
+      case "rain":
+        L.push(layers.rain({ rate: Math.max(4, precipRate), wind: w }), layers.glass()); break;
+      case "drizzle":
+        L.push(layers.rain({ rate: Math.min(3, precipRate + 1), wind: w })); break;
+      case "snow":
+        L.push(layers.snow({ wind: w })); break;
+      case "fog":
+        L.push(layers.fog()); break;
+      case "cloudy":
+        L.push(layers.clouds({ rgb: info.isDay ? "235,240,246" : "150,160,175", alpha: info.isDay ? 1 : .7, wind: w })); break;
+      case "partly":
+        if (info.golden) L.push(layers.sunset());
+        else if (info.isDay) L.push(layers.sun({ strength: .6 }));
+        else L.push(layers.stars());
+        L.push(layers.clouds({ rgb: info.golden ? "255,200,205" : info.isDay ? "255,255,255" : "150,160,175", alpha: info.isDay ? .85 : .55, wind: w })); break;
+      default: // despejado
+        if (info.golden) L.push(layers.sunset());
+        else if (info.isDay) L.push(layers.sun({ strength: 1 }));
+        else L.push(layers.stars());
+    }
+    return { key: JSON.stringify([info.kind, info.isDay, info.golden, Math.round(w * 4), precipRate]), layers: L, alpha: 0 };
+  }
+
+  let scenes = [];          // escenas activas (la última es la actual); las anteriores se desvanecen
+  let entry = 0;            // L · animación de entrada (0 → 1)
+  let entryDelay = .25;
+  const FADE = 2;           // J · segundos del fundido entre climas
+
+  function resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 2), r = cv.getBoundingClientRect();
+    W = r.width; H = r.height;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    for (const s of scenes) s.layers.forEach(l => l.init());
+  }
+
+  function step(dt) {
+    ctx.clearRect(0, 0, W, H);
+    if (entryDelay > 0) entryDelay -= dt; else entry = Math.min(1, entry + dt / .6);
+    const ease = entry * entry * (3 - 2 * entry);
+    scenes.forEach((s, i) => {
+      const cur = i === scenes.length - 1;
+      s.alpha = Math.max(0, Math.min(1, s.alpha + (cur ? dt : -dt) / FADE));
+    });
+    scenes = scenes.filter((s, i) => s.alpha > 0 || i === scenes.length - 1);
+    for (const s of scenes) {
+      F = s.alpha * ease;
+      if (F <= 0) continue;
+      for (const l of s.layers) l.draw(dt);
+    }
+    F = 1;
+  }
+
+  // M · 30 cuadros por segundo como máximo, nada cuando la página está oculta
+  let last = 0, acc = 0, running = false;
+  function loop(now) {
+    if (!running) return;
+    const dt = Math.min(.1, (now - last) / 1000 || 0); last = now; acc += dt;
+    if (acc >= 1 / 30) { step(Math.min(acc, .1)); acc = 0; }
+    requestAnimationFrame(loop);
+  }
+  function start() {
+    if (running || document.hidden) return;
+    if (motion.matches) { stillFrame(); return; }
+    running = true; last = performance.now(); requestAnimationFrame(loop);
+  }
+  function stop() { running = false; }
+  // Sin animaciones: un cuadro quieto con el clima ya dibujado
+  function stillFrame() {
+    entry = 1; entryDelay = 0;
+    scenes.forEach(s => s.alpha = s === scenes[scenes.length - 1] ? 1 : 0);
+    scenes = scenes.slice(-1);
+    for (let i = 0; i < 45; i++) step(1 / 30);
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stop();
+    else { entry = 0; entryDelay = .25; start(); } // L · al volver a abrir el panel
+  });
+  motion.addEventListener?.("change", () => { stop(); start(); });
+  new ResizeObserver(resize).observe(cv);
+
+  // Llamado desde la página cada vez que llegan datos nuevos
+  window.skyFX = {
+    set(info) {
+      const next = buildScene(info);
+      const cur = scenes[scenes.length - 1];
+      if (cur && cur.key === next.key) return;
+      if (W === 0) resize();
+      next.layers.forEach(l => l.init());
+      if (!cur) next.alpha = 1; // primera vez: sin fundido, solo la entrada
+      scenes.push(next);
+      if (scenes.length > 3) scenes.splice(0, scenes.length - 3);
+      if (motion.matches) stillFrame(); else start();
+    }
+  };
+})();
+</script>
+<script>
 const DEFAULT = {name:"Temuco", region:"Araucanía, Chile", lat:-38.7359, lon:-72.5904};
 let place = DEFAULT;
 try { const s = JSON.parse(localStorage.getItem("tiempo.place")); if (s && s.lat) place = s; } catch(e){}
@@ -255,12 +598,11 @@ function setSky(c, d){
   const now = mins(c.time), sr = mins(d.daily.sunrise[0]), ss = mins(d.daily.sunset[0]);
   const golden = !isWet(w.kind) && w.kind !== "fog" && (Math.abs(now-ss) <= 45 || Math.abs(now-sr) <= 35);
   let cls = golden ? "sky-golden" : "sky-" + sky + (c.is_day ? "" : "-n");
-  let fx = w.kind === "rain" || w.kind === "storm" ? "fx-rain" : w.kind === "drizzle" ? "fx-drizzle" :
-           w.kind === "snow" ? "fx-snow" : w.kind === "fog" ? "fx-fog" :
-           (!c.is_day && !golden && (w.kind === "clear" || w.kind === "partly")) ? "fx-stars" : "";
   const root = document.documentElement;
-  root.className = root.className.split(" ").filter(k => !k.startsWith("sky-") && !k.startsWith("fx-")).join(" ");
-  root.classList.add(cls); if (fx) root.classList.add(fx);
+  root.className = root.className.split(" ").filter(k => !k.startsWith("sky-")).join(" ");
+  root.classList.add(cls);
+  window.skyFX?.set({kind: w.kind, isDay: !!c.is_day, golden, code: c.weather_code,
+    wind: c.wind_speed_10m, windDir: c.wind_direction_10m, precip: c.precipitation || 0});
 }
 
 // Frase con lo que viene en las próximas horas
@@ -296,7 +638,7 @@ async function load(){
   lastLoad = Date.now();
   $("city").textContent = place.name;
   const url = "https://api.open-meteo.com/v1/forecast?latitude="+place.lat+"&longitude="+place.lon+
-    "&current=temperature_2m,apparent_temperature,relative_humidity_2m,is_day,weather_code,wind_speed_10m,wind_direction_10m"+
+    "&current=temperature_2m,apparent_temperature,relative_humidity_2m,is_day,weather_code,wind_speed_10m,wind_direction_10m,precipitation"+
     "&hourly=temperature_2m,weather_code,precipitation_probability,is_day"+
     "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,uv_index_max,sunrise,sunset"+
     "&timezone=auto&forecast_days=7";
