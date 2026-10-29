@@ -17,6 +17,7 @@ Viene configurado para **Temuco, Chile**, pero puedes elegir cualquier ciudad de
 - **Cielo animado.** Lluvia con profundidad que se inclina según el viento real, gotas en el vidrio, tormenta con relámpagos, rayos de sol, nubes que pasan, neblina, noche estrellada con estrellas fugaces, nieve que se mece y atardecer. Cambia con un fundido suave, se detiene con el panel cerrado (máximo 30 cuadros por segundo) y respeta la opción de Windows de desactivar animaciones.
 - **Número con color según la temperatura.** Azul bajo 5°, celeste hasta 12°, blanco hasta 22°, naranjo hasta 28° y rojo sobre 28°.
 - **Pronóstico completo.** El botón **"Ver 7 días →"** abre un panel más amplio con los próximos 7 días.
+- **Fondo de pantalla animado.** El tiempo, con su cielo animado, queda detrás de los íconos del escritorio. Se pausa solo con juegos en pantalla completa o ventanas maximizadas. Se activa o desactiva desde el menú del clic derecho; al desactivarlo vuelve tu imagen de fondo de siempre.
 - **Cualquier ciudad.** Con **"Cambiar ciudad"** buscas otra; el programa la recuerda.
 - **Arranca con Windows.** Al encender el PC solo aparece el número, sin abrir ventanas. Se puede desactivar.
 - **Menú con clic derecho:** ver el panel, pronóstico completo, actualizar ahora, iniciar con Windows y salir.

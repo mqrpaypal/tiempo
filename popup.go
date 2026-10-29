@@ -44,6 +44,7 @@ type flyout struct {
 	cssW    int
 	cssH    int // solo panel del reloj (alto según contenido)
 	side    bool
+	pinned  bool // fondo de pantalla: no se esconde al perder el foco
 	wv      webview2.WebView
 	ch      *edge.Chromium
 	hwnd    uintptr
@@ -97,11 +98,17 @@ func flyoutWndProc(hwnd, msg, wp, lp uintptr) uintptr {
 	}
 	switch msg {
 	case 0x0010: // WM_CLOSE: solo se esconde
-		f.hide()
+		if !f.pinned {
+			f.hide()
+		}
 		return 0
 	case 0x0006: // WM_ACTIVATE
-		if wp&0xffff == 0 { // clic fuera del panel
+		if wp&0xffff == 0 && !f.pinned { // clic fuera del panel
 			f.hide()
+		}
+	case 0x0021: // WM_MOUSEACTIVATE: el fondo nunca toma el foco
+		if f.pinned {
+			return 3 // MA_NOACTIVATE
 		}
 	}
 	r, _, _ := pCallWindowProc.Call(f.oldProc, hwnd, msg, wp, lp)

@@ -545,6 +545,11 @@ func showMenu(hwnd uintptr) {
 		chk = 0x8 // MF_CHECKED
 	}
 	pAppendMenu.Call(m, chk, idStartup, uintptr(unsafe.Pointer(u16("Iniciar con Windows"))))
+	wchk := uintptr(0)
+	if wallOn {
+		wchk = 0x8
+	}
+	pAppendMenu.Call(m, wchk, idWall, uintptr(unsafe.Pointer(u16("Fondo de pantalla animado"))))
 	pAppendMenu.Call(m, 0x800, 0, 0) // separador
 	pAppendMenu.Call(m, 0, idExit, uintptr(unsafe.Pointer(u16("Salir"))))
 	var pt struct{ x, y int32 }
@@ -572,14 +577,24 @@ func wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 			showSidePanel()
 		case idRefresh:
 			go fetchWeather()
+		case idWall:
+			toggleWall()
 		case idStartup:
 			setStartup(!startupEnabled())
 		case idExit:
 			pDestroyWindow.Call(hwnd)
 		}
 		return 0
+	case msg == wmTimer && wParam == 2: // revisión del fondo de pantalla
+		wallTick()
+		return 0
 	case msg == wmTimer || msg == wmFetch:
 		go fetchWeather()
+		return 0
+	case msg == wmWallTick: // reintento al colocar el fondo
+		if wallOn {
+			enableWall()
+		}
 		return 0
 	case msg == wmPanelHeight:
 		if h := int(wParam); h > 100 && h < 2000 {
@@ -597,8 +612,15 @@ func wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 		return 0
 	case taskbarMsg != 0 && msg == taskbarMsg: // el Explorador se reinició
 		updateTray(true)
+		if wallOn { // el escritorio se volvió a crear: colgar de nuevo el fondo
+			resetWallIfGone()
+			time.AfterFunc(2*time.Second, func() { pPostMessage.Call(hwndMain, wmWallTick, 1, 0) })
+		}
 		return 0
 	case msg == wmDestroy:
+		if wallOn {
+			disableWall() // al salir vuelve la imagen de fondo de siempre
+		}
 		pShellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&nid)))
 		pPostQuitMessage.Call(0)
 		return 0
@@ -796,6 +818,10 @@ func main() {
 	time.AfterFunc(3*time.Second, promoteTrayIcon)
 	go fetchWeather()
 	pSetTimer.Call(hwndMain, 1, 10*60*1000, 0) // cada 10 minutos
+	pSetTimer.Call(hwndMain, 2, 2000, 0)       // fondo de pantalla: pausa con juegos o ventanas maximizadas
+	if wallWanted() {
+		enableWall()
+	}
 	if !alInicio {
 		showPanel()
 	}

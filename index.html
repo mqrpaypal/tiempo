@@ -124,6 +124,20 @@ html.lateral .wrap{max-width:none;padding:22px 22px 18px}
 html.lateral .temp{font-size:5.6rem}
 html.lateral .bigicon{width:104px;height:104px}
 html.lateral .more{display:none}
+/* Fondo de pantalla: cielo a pantalla completa, datos grandes a la derecha (los íconos del escritorio quedan a la izquierda) */
+html.fondo,html.fondo body{height:100%;overflow:hidden}
+html.fondo .wrap{max-width:none;width:min(600px,38vw);margin:0 4vw 0 auto;min-height:100%;align-content:center;padding-block:4vh;gap:clamp(12px,1.6vh,20px)}
+html.fondo #change,html.fondo #refresh,html.fondo #cerrar,html.fondo #search,html.fondo .more{display:none!important}
+html.fondo .city{font-size:clamp(1.3rem,1.6vw,2rem)}
+html.fondo .sub{font-size:clamp(.95rem,1vw,1.2rem)}
+html.fondo .temp{font-size:clamp(6rem,9vw,10rem)}
+html.fondo .bigicon{width:clamp(110px,9vw,170px);height:clamp(110px,9vw,170px)}
+html.fondo .summary{font-size:clamp(1rem,1.05vw,1.25rem)}
+html.fondo .glass{padding:clamp(12px,1.2vw,18px) clamp(14px,1.4vw,22px)}
+html.fondo .h svg{width:28px;height:28px}
+html.fondo .h .p{display:block}
+html.fondo .d{padding:4px 0}
+html.fondo #pie{color:var(--soft)}
 </style>
 </head>
 <body>
@@ -217,6 +231,9 @@ html.lateral .more{display:none}
   const R = (a, b) => a + Math.random() * (b - a);
   const TAU = Math.PI * 2;
   let W = 0, H = 0, F = 1; // F: opacidad global de la capa que se está dibujando
+  // Escala para pantallas grandes (fondo de pantalla): más gotas y nubes más grandes
+  const DENS = () => Math.max(1, Math.sqrt(W * H / (400 * 360)));
+  const SC = () => Math.min(3, Math.max(1, W / 420));
 
   // ---------- Sprites de nubes (se dibujan una vez) ----------
   function cloudSprite(scale, rgb) {
@@ -242,7 +259,7 @@ html.lateral .more{display:none}
       return {
         init() { drops = []; splash = []; },
         draw(dt) {
-          const want = Math.round(14 + opt.rate * 15), wind = opt.wind;
+          const want = Math.round((14 + opt.rate * 15) * DENS()), wind = opt.wind;
           while (drops.length < want) drops.push({ L: Math.floor(R(0, 3)), x: R(-W * .3, W * 1.3), y: R(-H, H) });
           if (drops.length > want) drops.length = want;
           ctx.lineCap = "round";
@@ -320,7 +337,7 @@ html.lateral .more{display:none}
     sun(opt) {
       let a = 0, motes = [];
       return {
-        init() { motes = [...Array(24)].map(() => ({ x: R(0, W), y: R(0, H), v: R(4, 12), p: R(0, TAU), r: R(.8, 2) })); },
+        init() { motes = [...Array(Math.round(24 * DENS()))].map(() => ({ x: R(0, W), y: R(0, H), v: R(4, 12), p: R(0, TAU), r: R(.8, 2) })); },
         draw(dt) {
           a += dt * .05;
           const s = opt.strength, cx = W * .86, cy = -H * .12, len = Math.hypot(W, H) * 1.2;
@@ -352,7 +369,7 @@ html.lateral .more{display:none}
         init() {
           cs = [0, 1, 2].flatMap(L => [...Array(3)].map(() => ({
             L, x: R(-W * .3, W), y: R(.04, .5) * H + L * H * .08, sp: [6, 12, 22][L] * (opt.wind < 0 ? -1 : 1),
-            img: cloudSprite([.6, .85, 1.15][L], opt.rgb), a: [.32, .46, .62][L] * opt.alpha
+            img: cloudSprite([.6, .85, 1.15][L] * SC(), opt.rgb), a: [.32, .46, .62][L] * opt.alpha
           })));
         },
         draw(dt) {
@@ -371,7 +388,7 @@ html.lateral .more{display:none}
     fog() {
       let b = [];
       return {
-        init() { b = [...Array(9)].map((_, i) => ({ x: R(-W, W), y: H * (.22 + i * .088), sp: R(5, 14) * (i % 2 ? 1 : -1), img: cloudSprite(R(1, 1.6), "235,240,245"), a: R(.18, .3) })); },
+        init() { b = [...Array(9)].map((_, i) => ({ x: R(-W, W), y: H * (.22 + i * .088), sp: R(5, 14) * (i % 2 ? 1 : -1), img: cloudSprite(R(1, 1.6) * SC(), "235,240,245"), a: R(.18, .3) })); },
         draw(dt) {
           for (const f of b) {
             f.x += f.sp * dt; if (f.x > W + 40) f.x = -f.img.width; if (f.x < -f.img.width - 40) f.x = W;
@@ -416,7 +433,7 @@ html.lateral .more{display:none}
     snow(opt) {
       let fl = [];
       return {
-        init() { fl = [...Array(90)].map(() => { const z = Math.random(); return { x: R(0, W), y: R(-H, H), z, r: .8 + z * 2.8, v: 14 + z * 42, amp: 6 + z * 16, p: R(0, TAU) }; }).sort((a, b) => a.z - b.z); },
+        init() { fl = [...Array(Math.round(90 * DENS()))].map(() => { const z = Math.random(); return { x: R(0, W), y: R(-H, H), z, r: .8 + z * 2.8, v: 14 + z * 42, amp: 6 + z * 16, p: R(0, TAU) }; }).sort((a, b) => a.z - b.z); },
         draw(dt) {
           for (const f of fl) {
             f.y += f.v * dt; f.p += dt * (.6 + f.z * .6); if (f.y > H + 6) { f.y = -6; f.x = R(0, W); }
@@ -434,7 +451,7 @@ html.lateral .more{display:none}
     sunset() {
       let t = 0, cs = [];
       return {
-        init() { cs = [...Array(4)].map((_, i) => ({ x: R(-W, W), y: H * (.16 + i * .1), sp: R(4, 9), img: cloudSprite(R(.7, 1.1), "255,190,200") })); },
+        init() { cs = [...Array(4)].map((_, i) => ({ x: R(-W, W), y: H * (.16 + i * .1), sp: R(4, 9), img: cloudSprite(R(.7, 1.1) * SC(), "255,190,200") })); },
         draw(dt) {
           t += dt;
           const sx = W * .2, sy = H * (1.03 + Math.sin(t / 9) * .02), pulse = 1 + Math.sin(t * .9) * .08;
@@ -589,7 +606,7 @@ const mins = t => +t.slice(11,13)*60 + +t.slice(14,16);   // "2026-10-29T18:05" 
 const hhmm = t => t.slice(11,16);
 
 const QS = new URLSearchParams(location.search);
-const PANEL = QS.has("panel"), LATERAL = QS.has("lateral");
+const PANEL = QS.has("panel"), LATERAL = QS.has("lateral"), FONDO = QS.has("fondo");
 
 // Cielo según el tiempo actual, la hora y el atardecer/amanecer
 function setSky(c, d){
@@ -670,7 +687,7 @@ function render(d){
   $("summary").querySelector("use").setAttribute("href", "#i-"+s.icon);
   $("sumtext").innerHTML = s.text;
 
-  const count = LATERAL ? 24 : 6;
+  const count = LATERAL ? 24 : FONDO ? 8 : 6;
   const hours = $("hours"); hours.innerHTML = "";
   for (let k = i; k < Math.min(i+count, d.hourly.time.length); k++){
     const p = d.hourly.precipitation_probability[k];
@@ -757,7 +774,8 @@ if (PANEL) {
   $("ver7").onclick = () => fetch("/api/lateral", {method:"POST"}).catch(()=>{});
   document.addEventListener("keydown", e => { if (e.key === "Escape") ocultar(); });
 }
-if (!PANEL && !LATERAL) $("hlabel").hidden = false;
+if (FONDO) document.documentElement.classList.add("fondo");
+if (!PANEL) $("hlabel").hidden = false;
 
 (async () => {
   if (location.protocol.startsWith("http")) {
