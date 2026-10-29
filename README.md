@@ -13,7 +13,8 @@ Viene configurado para **Temuco, Chile**, pero puedes elegir cualquier ciudad de
 ## Qué hace
 
 - **Temperatura y cielo en la barra de tareas.** Un solo ícono junto al reloj con la temperatura (por ejemplo **14°**) y, en la esquina, un dibujo del estado del cielo: sol, luna, nubes, lluvia, nieve, tormenta o neblina. Se actualiza cada 10 minutos.
-- **Panel desplegable.** Clic en el número: aparece abajo a la derecha con temperatura, sensación térmica, humedad, viento, lluvia del día, índice UV y las próximas 24 horas. Se cierra con otro clic, haciendo clic fuera o con `Esc`.
+- **Panel con cielo dinámico.** Clic en el ícono: aparece abajo a la derecha un panel cuyo fondo cambia según el tiempo y la hora (lluvia, despejado, nublado, noche estrellada, atardecer, nieve, neblina). Muestra la temperatura, una frase con lo que viene (por ejemplo "Sigue la llovizna hasta las 21:00, después se despeja") y las próximas horas. Se cierra con otro clic, haciendo clic fuera o con `Esc`.
+- **Número con color según la temperatura.** Azul bajo 5°, celeste hasta 12°, blanco hasta 22°, naranjo hasta 28° y rojo sobre 28°.
 - **Pronóstico completo.** El botón **"Ver 7 días →"** abre un panel más amplio con los próximos 7 días.
 - **Cualquier ciudad.** Con **"Cambiar ciudad"** buscas otra; el programa la recuerda.
 - **Arranca con Windows.** Al encender el PC solo aparece el número, sin abrir ventanas. Se puede desactivar.

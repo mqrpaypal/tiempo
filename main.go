@@ -277,7 +277,35 @@ func inkDigits(label string, h int32) (mask []float64, w, hh int) {
 }
 
 // makeTrayIcon: dibujo del cielo arriba a la derecha y la temperatura con ° abajo, en un solo ícono.
-func makeTrayIcon(text string, code int, day bool) uintptr {
+// tempColor: color del número según la temperatura (azul frío → rojo calor).
+// En barra clara se usan tonos más oscuros para que se lean.
+func tempColor(t float64, light bool) rgb {
+	type step struct {
+		max         float64
+		dark, clear uint32
+	}
+	steps := []step{
+		{5, 0x5AA9FF, 0x1F6FD1},   // bajo 5°: azul
+		{12, 0x9FD4FF, 0x2B8BC9},  // 5° a 12°: celeste
+		{22, 0xFFFFFF, 0x1A1A1A},  // 13° a 22°: blanco (o negro en barra clara)
+		{28, 0xFFB347, 0xC46A00},  // 23° a 28°: naranjo
+		{1e9, 0xFF6B57, 0xC8322A}, // sobre 28°: rojo
+	}
+	if math.IsNaN(t) {
+		t = 15
+	}
+	for _, s := range steps {
+		if math.Round(t) <= s.max {
+			if light {
+				return hex(s.clear)
+			}
+			return hex(s.dark)
+		}
+	}
+	return hex(0xFFFFFF)
+}
+
+func makeTrayIcon(text string, code int, day bool, temp float64) uintptr {
 	n := int(trayIconSize())
 	light := lightTaskbar()
 	cv := newCanvas(n)
@@ -342,9 +370,9 @@ func makeTrayIcon(text string, code int, day bool) uintptr {
 	}
 
 	// 3) Contorno del color de la barra para separar el número del dibujo, y luego el número.
-	fg, halo := hex(0xFFFFFF), hex(0x1C1C1C)
+	fg, halo := tempColor(temp, light), hex(0x1C1C1C)
 	if light {
-		fg, halo = hex(0x1A1A1A), hex(0xF0F0F0)
+		halo = hex(0xF0F0F0)
 	}
 	cv.fillMask(dilate(ink, n, math.Max(1, float64(n)/18)), halo)
 	cv.fillMask(ink, fg)
@@ -407,7 +435,7 @@ func updateTray(add bool) {
 	} else if e {
 		tip = p.Name + ": sin conexión"
 	}
-	icon := makeTrayIcon(label, map[bool]int{true: -1, false: c}[math.IsNaN(t)], day)
+	icon := makeTrayIcon(label, map[bool]int{true: -1, false: c}[math.IsNaN(t)], day, t)
 
 	nid.cbSize = uint32(unsafe.Sizeof(nid))
 	nid.hWnd = hwndMain
