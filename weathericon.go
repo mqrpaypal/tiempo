@@ -181,10 +181,10 @@ func drawWeatherOn(cv *canvas, code int, day, light bool, ox, oy, sz float64) {
 	case code == 3: // nublado
 		c.fill(cloudShape(0.22, -0.02, 0.78), backCloud)
 		c.fill(cloudShape(0.0, 0.16, 0.92), cloudCol)
-	case code == 45 || code == 48: // neblina
-		c.fill(capsule(0.14, 0.32, 0.80, 0.32, 0.065), fogCol)
-		c.fill(capsule(0.22, 0.52, 0.88, 0.52, 0.065), fogCol)
-		c.fill(capsule(0.12, 0.72, 0.74, 0.72, 0.065), fogCol)
+	case code == 45 || code == 48: // neblina: nube con franjas de niebla
+		c.fill(cloudShape(0.02, -0.16, 0.96), cloudCol)
+		c.fill(capsule(0.16, 0.72, 0.70, 0.72, 0.06), fogCol)
+		c.fill(capsule(0.28, 0.88, 0.84, 0.88, 0.06), fogCol)
 	case code >= 51 && code <= 57: // llovizna
 		topCloud(cloudCol)
 		drops(false, 2)
