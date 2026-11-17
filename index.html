@@ -138,10 +138,38 @@ html.fondo .h svg{width:28px;height:28px}
 html.fondo .h .p{display:block}
 html.fondo .d{padding:4px 0}
 html.fondo #pie{color:var(--soft)}
+/* Foto de la ciudad (solo fondo de pantalla): debajo de las animaciones, teñida según clima y hora */
+#photo{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0;transition:opacity 1.2s ease}
+#photo.on{opacity:1}
+#photo img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 40%;transition:filter 2s ease}
+#photo .tint{position:absolute;inset:0;transition:background 2s ease}
+#photo .scrim-l{position:absolute;left:0;top:0;bottom:0;width:22%;background:linear-gradient(90deg,rgba(8,16,30,.45),rgba(8,16,30,0))}
+#photo .scrim-r{position:absolute;right:0;top:0;bottom:0;width:48%;background:linear-gradient(270deg,rgba(8,16,30,.66),rgba(8,16,30,.25) 70%,rgba(8,16,30,0))}
+html.fondo.foto .glass{background:rgba(12,20,34,.38);border-color:rgba(255,255,255,.16)}
+html.fondo.foto .city,html.fondo.foto .sub,html.fondo.foto .temp,html.fondo.foto #pie{text-shadow:0 1px 8px rgba(0,0,0,.55)}
+html.fondo.foto .sub{color:#e9eef5}
+#credit{position:fixed;left:7%;bottom:2.2vh;z-index:1;font-size:11px;color:rgba(255,255,255,.75);text-shadow:0 1px 3px rgba(0,0,0,.7);max-width:40vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+html.fondo.sky-clear #photo img,html.fondo.sky-partly #photo img{filter:saturate(1.05)}
+html.fondo.sky-clear #photo .tint,html.fondo.sky-partly #photo .tint{background:linear-gradient(180deg,rgba(70,110,160,.10),rgba(0,0,0,0) 60%)}
+html.fondo.sky-cloudy #photo img{filter:saturate(.7) brightness(.9)}
+html.fondo.sky-cloudy #photo .tint{background:rgba(90,100,115,.25)}
+html.fondo.sky-rain #photo img,html.fondo.sky-storm #photo img{filter:saturate(.45) brightness(.75) contrast(.95)}
+html.fondo.sky-rain #photo .tint{background:linear-gradient(180deg,rgba(55,70,100,.55),rgba(35,45,65,.45))}
+html.fondo.sky-storm #photo .tint{background:linear-gradient(180deg,rgba(35,38,55,.65),rgba(20,22,32,.5))}
+html.fondo.sky-snow #photo img{filter:saturate(.5) brightness(.95)}
+html.fondo.sky-snow #photo .tint{background:rgba(200,215,235,.28)}
+html.fondo.sky-fog #photo img{filter:saturate(.5) brightness(.95) blur(1.5px)}
+html.fondo.sky-fog #photo .tint{background:linear-gradient(180deg,rgba(225,230,236,.45),rgba(200,208,216,.35))}
+html.fondo.sky-golden #photo img{filter:saturate(1.15) brightness(.9)}
+html.fondo.sky-golden #photo .tint{background:linear-gradient(180deg,rgba(240,140,80,.45) 0%,rgba(190,90,110,.30) 45%,rgba(60,40,90,.35) 100%)}
+html.fondo[class*="-n"] #photo img{filter:brightness(.32) saturate(.55) contrast(1.1)}
+html.fondo[class*="-n"] #photo .tint{background:linear-gradient(180deg,rgba(10,18,50,.55),rgba(5,10,25,.35))}
 </style>
 </head>
 <body>
+<div id="photo" aria-hidden="true"><img id="photoimg" alt=""><div class="tint"></div><div class="scrim-l"></div><div class="scrim-r"></div></div>
 <canvas id="skyfx" aria-hidden="true"></canvas>
+<div id="credit" hidden></div>
 <div class="wrap">
   <header>
     <div>
@@ -231,6 +259,7 @@ html.fondo #pie{color:var(--soft)}
   const R = (a, b) => a + Math.random() * (b - a);
   const TAU = Math.PI * 2;
   let W = 0, H = 0, F = 1; // F: opacidad global de la capa que se está dibujando
+  const FOTO = () => document.documentElement.classList.contains("foto"); // la foto ya trae su propio cielo
   // Escala para pantallas grandes (fondo de pantalla): más gotas y nubes más grandes
   const DENS = () => Math.max(1, Math.sqrt(W * H / (400 * 360)));
   const SC = () => Math.min(3, Math.max(1, W / 420));
@@ -340,7 +369,7 @@ html.fondo #pie{color:var(--soft)}
         init() { motes = [...Array(Math.round(24 * DENS()))].map(() => ({ x: R(0, W), y: R(0, H), v: R(4, 12), p: R(0, TAU), r: R(.8, 2) })); },
         draw(dt) {
           a += dt * .05;
-          const s = opt.strength, cx = W * .86, cy = -H * .12, len = Math.hypot(W, H) * 1.2;
+          const s = opt.strength * (FOTO() ? .55 : 1), cx = W * .86, cy = -H * .12, len = Math.hypot(W, H) * 1.2;
           ctx.save(); ctx.globalCompositeOperation = "lighter";
           for (let i = 0; i < 11; i++) {
             const ang = a + i * TAU / 11 * .5 + .9, sp = .07 + .03 * Math.sin(i * 1.7);
@@ -373,6 +402,7 @@ html.fondo #pie{color:var(--soft)}
           })));
         },
         draw(dt) {
+          if (FOTO()) return;
           for (const c of cs) {
             c.x += c.sp * dt;
             if (c.sp > 0 && c.x > W + 20) c.x = -c.img.width - R(0, 60);
@@ -458,6 +488,7 @@ html.fondo #pie{color:var(--soft)}
           const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, H * .95 * pulse);
           glow.addColorStop(0, `rgba(255,214,140,${.7 * F})`); glow.addColorStop(.25, `rgba(255,170,110,${.32 * F})`); glow.addColorStop(1, "rgba(255,150,120,0)");
           ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+          if (FOTO()) return;
           ctx.fillStyle = `rgba(255,217,138,${.85 * F})`; ctx.beginPath(); ctx.arc(sx, sy, H * .09, 0, TAU); ctx.fill();
           for (const c of cs) {
             c.x += c.sp * dt; if (c.x > W + 20) c.x = -c.img.width;
@@ -622,6 +653,68 @@ function setSky(c, d){
     wind: c.wind_speed_10m, windDir: c.wind_direction_10m, precip: c.precipitation || 0});
 }
 
+// ---------- Foto de la ciudad (Wikipedia / Wikimedia Commons) ----------
+// Busca la foto principal del artículo de la ciudad, descarta mapas, banderas y escudos,
+// y guarda el resultado una semana para no consultar Wikipedia cada vez.
+const stripTags = s => { const d = document.createElement("div"); d.innerHTML = s || ""; return (d.textContent || "").replace(/\s+/g, " ").trim(); };
+async function wikiImage(lang, params){
+  const u = "https://" + lang + ".wikipedia.org/w/api.php?format=json&formatversion=2&origin=*&redirects=1" +
+    "&prop=pageimages|pageprops&piprop=original|name&ppprop=disambiguation&" + params;
+  const j = await (await fetch(u)).json();
+  for (const p of (j.query && j.query.pages) || []) {
+    if (p.missing || (p.pageprops && "disambiguation" in p.pageprops) || !p.pageimage) continue;
+    const name = p.pageimage;
+    if (/\.svg$/i.test(name) || /(^|[\s_(.-])(mapa|map|flag|bandera|escudo|coat|locator|logo|seal|ubicaci|localizaci)/i.test(name)) continue;
+    return {lang, file: name, page: p.title};
+  }
+  return null;
+}
+async function findCityPhoto(pl){
+  const country = (pl.region || "").split(",").pop().trim();
+  const tries = [
+    ["es", "titles=" + encodeURIComponent(pl.name)],
+    ["es", "generator=search&gsrlimit=3&gsrsearch=" + encodeURIComponent(pl.name + " " + country + " ciudad")],
+    ["en", "titles=" + encodeURIComponent(pl.name)],
+    ["en", "generator=search&gsrlimit=3&gsrsearch=" + encodeURIComponent(pl.name + " " + country + " city")]
+  ];
+  for (const [lang, q] of tries) {
+    try { const r = await wikiImage(lang, q); if (r) return r; } catch(e) {}
+  }
+  return null;
+}
+async function photoInfo(found){
+  const w = Math.min(2560, Math.max(1280, Math.round(screen.width * (devicePixelRatio || 1))));
+  const u = "https://" + found.lang + ".wikipedia.org/w/api.php?format=json&formatversion=2&origin=*" +
+    "&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=" + w + "&titles=" + encodeURIComponent("File:" + found.file);
+  const j = await (await fetch(u)).json();
+  const ii = j.query.pages[0].imageinfo[0], md = ii.extmetadata || {};
+  const artist = stripTags(md.Artist && md.Artist.value) || "autor desconocido";
+  const lic = stripTags(md.LicenseShortName && md.LicenseShortName.value);
+  return {url: ii.thumburl || ii.url, credit: "Foto: " + artist + (lic ? " · " + lic : "") + " · Wikimedia Commons", page: ii.descriptionurl};
+}
+let photoKey = "";
+async function cityPhoto(pl){
+  if (!FONDO) return;
+  const key = "tiempo.foto." + pl.lat.toFixed(2) + "," + pl.lon.toFixed(2);
+  if (key === photoKey) return;
+  photoKey = key;
+  let info = null;
+  try { const c = JSON.parse(localStorage.getItem(key)); if (c && Date.now() - c.t < 7*864e5) info = c.info; } catch(e) {}
+  if (!info) {
+    try {
+      const found = await findCityPhoto(pl);
+      info = found ? await photoInfo(found) : {url: null};
+      try { localStorage.setItem(key, JSON.stringify({t: Date.now(), info})); } catch(e) {}
+    } catch(e) { photoKey = ""; return; } // sin conexión: se reintenta en la próxima carga
+  }
+  if (key !== photoKey) return; // cambió la ciudad mientras buscaba
+  const box = $("photo"), img = $("photoimg"), cr = $("credit");
+  if (!info || !info.url) { box.classList.remove("on"); document.documentElement.classList.remove("foto"); cr.hidden = true; return; } // sin foto: queda el cielo
+  img.onload = () => { box.classList.add("on"); document.documentElement.classList.add("foto"); cr.textContent = info.credit; cr.hidden = false; };
+  img.onerror = () => { box.classList.remove("on"); document.documentElement.classList.remove("foto"); cr.hidden = true; };
+  img.src = info.url;
+}
+
 // Frase con lo que viene en las próximas horas
 function summary(d, i){
   const H = d.hourly, end = Math.min(i+13, H.time.length);
@@ -688,6 +781,7 @@ function dayCode(d, k){
 function render(d){
   const c = d.current, w = info(c.weather_code, c.is_day);
   setSky(c, d);
+  cityPhoto(place);
   $("bigicon").innerHTML = '<use href="#i-'+w.icon+'"/>';
   $("temp").textContent = Math.round(c.temperature_2m) + "°";
   $("sub").textContent = w.text + " · Sensación " + Math.round(c.apparent_temperature) + "°";
