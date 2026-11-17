@@ -657,11 +657,15 @@ function setSky(c, d){
 // Busca la foto principal del artículo de la ciudad, descarta mapas, banderas y escudos,
 // y guarda el resultado una semana para no consultar Wikipedia cada vez.
 const stripTags = s => { const d = document.createElement("div"); d.innerHTML = s || ""; return (d.textContent || "").replace(/\s+/g, " ").trim(); };
-async function wikiImage(lang, params){
-  const u = "https://" + lang + ".wikipedia.org/w/api.php?format=json&formatversion=2&origin=*&redirects=1" +
+async function wikiImage(lang, params, cityName){
+  const u = "https://" + lang + ".wikipedia.org/w/api.php?action=query&format=json&formatversion=2&origin=*&redirects=1" +
     "&prop=pageimages|pageprops&piprop=original|name&ppprop=disambiguation&" + params;
   const j = await (await fetch(u)).json();
-  for (const p of (j.query && j.query.pages) || []) {
+  const norm = s => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const n = norm(cityName);
+  const rank = p => (norm(p.title) === n ? 0 : norm(p.title).startsWith(n + " (") ? 1 : 2) * 100 + (p.index || 0);
+  const pages = ((j.query && j.query.pages) || []).slice().sort((a, b) => rank(a) - rank(b));
+  for (const p of pages) {
     if (p.missing || (p.pageprops && "disambiguation" in p.pageprops) || !p.pageimage) continue;
     const name = p.pageimage;
     if (/\.svg$/i.test(name) || /(^|[\s_(.-])(mapa|map|flag|bandera|escudo|coat|locator|logo|seal|ubicaci|localizaci)/i.test(name)) continue;
@@ -678,13 +682,13 @@ async function findCityPhoto(pl){
     ["en", "generator=search&gsrlimit=3&gsrsearch=" + encodeURIComponent(pl.name + " " + country + " city")]
   ];
   for (const [lang, q] of tries) {
-    try { const r = await wikiImage(lang, q); if (r) return r; } catch(e) {}
+    try { const r = await wikiImage(lang, q, pl.name); if (r) return r; } catch(e) {}
   }
   return null;
 }
 async function photoInfo(found){
   const w = Math.min(2560, Math.max(1280, Math.round(screen.width * (devicePixelRatio || 1))));
-  const u = "https://" + found.lang + ".wikipedia.org/w/api.php?format=json&formatversion=2&origin=*" +
+  const u = "https://" + found.lang + ".wikipedia.org/w/api.php?action=query&format=json&formatversion=2&origin=*" +
     "&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=" + w + "&titles=" + encodeURIComponent("File:" + found.file);
   const j = await (await fetch(u)).json();
   const ii = j.query.pages[0].imageinfo[0], md = ii.extmetadata || {};
@@ -695,7 +699,7 @@ async function photoInfo(found){
 let photoKey = "";
 async function cityPhoto(pl){
   if (!FONDO) return;
-  const key = "tiempo.foto." + pl.lat.toFixed(2) + "," + pl.lon.toFixed(2);
+  const key = "tiempo.foto2." + pl.lat.toFixed(2) + "," + pl.lon.toFixed(2);
   if (key === photoKey) return;
   photoKey = key;
   let info = null;
