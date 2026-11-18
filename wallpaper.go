@@ -37,6 +37,7 @@ var (
 const (
 	wmWallTick = 0x8007
 	idWall     = 6
+	idPhoto    = 7
 )
 
 func wallFlag(name string) string { return filepath.Join(dataDir, name) }

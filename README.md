@@ -18,7 +18,7 @@ Viene configurado para **Temuco, Chile**, pero puedes elegir cualquier ciudad de
 - **Número con color según la temperatura.** Azul bajo 5°, celeste hasta 12°, blanco hasta 22°, naranjo hasta 28° y rojo sobre 28°.
 - **Pronóstico completo.** El botón **"Ver 7 días →"** abre un panel más amplio con los próximos 7 días.
 - **Fondo de pantalla animado.** El tiempo, con su cielo animado, queda detrás de los íconos del escritorio. Se pausa solo con juegos en pantalla completa o ventanas maximizadas. Se activa o desactiva desde el menú del clic derecho; al desactivarlo vuelve tu imagen de fondo de siempre.
-- **Foto de la ciudad en el fondo.** En el fondo de pantalla aparece la foto principal del artículo de Wikipedia de la ciudad elegida, teñida según el clima y la hora (gris con lluvia, cálida al atardecer, oscura de noche), con las animaciones encima y el crédito del autor y su licencia. Si no hay una foto adecuada, se muestra el cielo animado.
+- **Fotos de la ciudad en el fondo.** En el fondo de pantalla aparecen fotos de la ciudad elegida, reunidas desde Wikidata, Wikipedia (es y en) y las categorías de vistas y panorámicas de Wikimedia Commons; rotan cada 30 minutos y con clic derecho → *Otra foto de la ciudad*. Cada una se muestra teñida según el clima y la hora (gris con lluvia, cálida al atardecer, oscura de noche), con las animaciones encima y el crédito del autor y su licencia. Si no hay una foto adecuada, se muestra el cielo animado.
 - **Cualquier ciudad.** Con **"Cambiar ciudad"** buscas otra; el programa la recuerda.
 - **Arranca con Windows.** Al encender el PC solo aparece el número, sin abrir ventanas. Se puede desactivar.
 - **Menú con clic derecho:** ver el panel, pronóstico completo, actualizar ahora, iniciar con Windows y salir.

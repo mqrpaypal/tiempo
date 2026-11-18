@@ -550,6 +550,9 @@ func showMenu(hwnd uintptr) {
 		wchk = 0x8
 	}
 	pAppendMenu.Call(m, wchk, idWall, uintptr(unsafe.Pointer(u16("Fondo de pantalla animado"))))
+	if wallOn {
+		pAppendMenu.Call(m, 0, idPhoto, uintptr(unsafe.Pointer(u16("Otra foto de la ciudad"))))
+	}
 	pAppendMenu.Call(m, 0x800, 0, 0) // separador
 	pAppendMenu.Call(m, 0, idExit, uintptr(unsafe.Pointer(u16("Salir"))))
 	var pt struct{ x, y int32 }
@@ -579,6 +582,10 @@ func wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 			go fetchWeather()
 		case idWall:
 			toggleWall()
+		case idPhoto:
+			if wallPanel.wv != nil {
+				wallPanel.wv.Eval("window.nextPhoto && window.nextPhoto()")
+			}
 		case idStartup:
 			setStartup(!startupEnabled())
 		case idExit:

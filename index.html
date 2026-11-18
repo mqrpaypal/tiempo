@@ -141,7 +141,7 @@ html.fondo #pie{color:var(--soft)}
 /* Foto de la ciudad (solo fondo de pantalla): debajo de las animaciones, teñida según clima y hora */
 #photo{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0;transition:opacity 1.2s ease}
 #photo.on{opacity:1}
-#photo img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 40%;transition:filter 2s ease}
+#photo img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 40%;transition:filter 2s ease,opacity .9s ease}
 #photo .tint{position:absolute;inset:0;transition:background 2s ease}
 #photo .scrim-l{position:absolute;left:0;top:0;bottom:0;width:22%;background:linear-gradient(90deg,rgba(8,16,30,.45),rgba(8,16,30,0))}
 #photo .scrim-r{position:absolute;right:0;top:0;bottom:0;width:48%;background:linear-gradient(270deg,rgba(8,16,30,.66),rgba(8,16,30,.25) 70%,rgba(8,16,30,0))}
@@ -653,77 +653,134 @@ function setSky(c, d){
     wind: c.wind_speed_10m, windDir: c.wind_direction_10m, precip: c.precipitation || 0});
 }
 
-// ---------- Foto de la ciudad (Wikipedia / Wikimedia Commons) ----------
-// Busca la foto principal del artículo de la ciudad, descarta mapas, banderas y escudos,
-// y guarda el resultado una semana para no consultar Wikipedia cada vez.
+// ---------- Fotos de la ciudad (Wikidata, Wikipedia y Wikimedia Commons) ----------
+// Arma una colección de fotos de la ciudad desde varias fuentes, todas libres y sin cuenta:
+//   1. Wikidata: la foto principal de la ciudad (P18) y su categoría de Commons (P373).
+//   2. Wikipedia (es y en): la foto principal del artículo.
+//   3. Wikimedia Commons: las subcategorías de vistas, panorámicas y fotos aéreas de la ciudad.
+// Descarta mapas, escudos, retratos verticales y lugares que no son vistas (aeropuertos, estadios…),
+// rota la foto cada 30 minutos y guarda la colección una semana.
 const stripTags = s => { const d = document.createElement("div"); d.innerHTML = s || ""; return (d.textContent || "").replace(/\s+/g, " ").trim(); };
-async function wikiImage(lang, params, cityName){
-  const u = "https://" + lang + ".wikipedia.org/w/api.php?action=query&format=json&formatversion=2&origin=*&redirects=1" +
-    "&prop=pageimages|pageprops&piprop=original|name&ppprop=disambiguation&" + params;
-  const j = await (await fetch(u)).json();
-  const norm = s => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const norm = s => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const BAD_NAME = /(^|[\s_(.,-])(mapa|map|flag|bandera|escudo|coat|locator|logo|seal|ubicaci|localizaci|aeropuerto|airport|estadio|stadium|interior|hospital|colegio|school|elecci|votaci|retrato|portrait|busto|placa|plaque)/i;
+const VIEW_CAT = /(view|vista|panoram|skyline|aerial|a[eé]rea|landscape|cityscape|mirador|from the air|by night|de noche|sunset|atardecer|overview)/i;
+const wapi = (host, params) => fetch("https://" + host + "/w/api.php?format=json&formatversion=2&origin=*&" + params).then(r => r.json());
+
+async function wikiLead(lang, params, cityName){
+  const j = await wapi(lang + ".wikipedia.org", "action=query&redirects=1&prop=pageimages|pageprops&piprop=name&ppprop=disambiguation|wikibase_item&" + params);
   const n = norm(cityName);
   const rank = p => (norm(p.title) === n ? 0 : norm(p.title).startsWith(n + " (") ? 1 : 2) * 100 + (p.index || 0);
   const pages = ((j.query && j.query.pages) || []).slice().sort((a, b) => rank(a) - rank(b));
   for (const p of pages) {
-    if (p.missing || (p.pageprops && "disambiguation" in p.pageprops) || !p.pageimage) continue;
-    const name = p.pageimage;
-    if (/\.svg$/i.test(name) || /(^|[\s_(.-])(mapa|map|flag|bandera|escudo|coat|locator|logo|seal|ubicaci|localizaci)/i.test(name)) continue;
-    return {lang, file: name, page: p.title};
+    if (p.missing || (p.pageprops && "disambiguation" in p.pageprops)) continue;
+    return {file: p.pageimage || null, qid: p.pageprops && p.pageprops.wikibase_item, title: p.title};
   }
   return null;
 }
-async function findCityPhoto(pl){
+async function cityFiles(pl){
   const country = (pl.region || "").split(",").pop().trim();
-  const tries = [
-    ["es", "titles=" + encodeURIComponent(pl.name)],
-    ["es", "generator=search&gsrlimit=3&gsrsearch=" + encodeURIComponent(pl.name + " " + country + " ciudad")],
-    ["en", "titles=" + encodeURIComponent(pl.name)],
-    ["en", "generator=search&gsrlimit=3&gsrsearch=" + encodeURIComponent(pl.name + " " + country + " city")]
-  ];
-  for (const [lang, q] of tries) {
-    try { const r = await wikiImage(lang, q, pl.name); if (r) return r; } catch(e) {}
+  const files = [];
+  let qid = null;
+  for (const [lang, q] of [["es", "titles=" + encodeURIComponent(pl.name)],
+                           ["es", "generator=search&gsrlimit=3&gsrsearch=" + encodeURIComponent(pl.name + " " + country + " ciudad")],
+                           ["en", "titles=" + encodeURIComponent(pl.name)]]) {
+    try {
+      const r = await wikiLead(lang, q, pl.name);
+      if (r) { if (r.file) files.push(r.file); qid = qid || r.qid; if (qid && files.length) break; }
+    } catch(e) {}
   }
-  return null;
+  let cat = null;
+  if (qid) {
+    try {
+      const j = await fetch("https://www.wikidata.org/w/api.php?action=wbgetentities&props=claims&format=json&origin=*&ids=" + qid).then(r => r.json());
+      const cl = (j.entities[qid] || {}).claims || {};
+      (cl.P18 || []).forEach(c => files.unshift(c.mainsnak.datavalue.value.replace(/ /g, "_")));
+      cat = cl.P373 && cl.P373[0].mainsnak.datavalue.value;
+    } catch(e) {}
+  }
+  if (cat) {
+    try {
+      const j = await wapi("commons.wikimedia.org", "action=query&list=categorymembers&cmtype=subcat&cmlimit=200&cmtitle=" + encodeURIComponent("Category:" + cat));
+      const subs = ((j.query && j.query.categorymembers) || []).map(c => c.title).filter(t => VIEW_CAT.test(t)).slice(0, 4);
+      for (const sc of subs) {
+        const k = await wapi("commons.wikimedia.org", "action=query&list=categorymembers&cmtype=file&cmlimit=40&cmtitle=" + encodeURIComponent(sc));
+        ((k.query && k.query.categorymembers) || []).forEach(m => files.push(m.title.replace(/^File:/, "").replace(/ /g, "_")));
+      }
+    } catch(e) {}
+  }
+  const seen = new Set();
+  return files.filter(f => { const k = norm(f); if (seen.has(k) || /\.svg$/i.test(f) || BAD_NAME.test(f)) return false; seen.add(k); return true; }).slice(0, 40);
 }
-async function photoInfo(found){
+// Datos de cada foto (tamaño, enlace a una versión del ancho de la pantalla, autor y licencia), en grupos de 20.
+async function photoDetails(files){
   const w = Math.min(2560, Math.max(1280, Math.round(screen.width * (devicePixelRatio || 1))));
-  const u = "https://" + found.lang + ".wikipedia.org/w/api.php?action=query&format=json&formatversion=2&origin=*" +
-    "&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=" + w + "&titles=" + encodeURIComponent("File:" + found.file);
-  const j = await (await fetch(u)).json();
-  const ii = j.query.pages[0].imageinfo[0], md = ii.extmetadata || {};
-  const artist = stripTags(md.Artist && md.Artist.value) || "autor desconocido";
-  const lic = stripTags(md.LicenseShortName && md.LicenseShortName.value);
-  return {url: ii.thumburl || ii.url, credit: "Foto: " + artist + (lic ? " · " + lic : "") + " · Wikimedia Commons", page: ii.descriptionurl};
+  const out = [];
+  for (let i = 0; i < files.length; i += 20) {
+    const titles = files.slice(i, i + 20).map(f => "File:" + f).join("|");
+    const j = await wapi("commons.wikimedia.org", "action=query&prop=imageinfo&iiprop=url|size|mime|extmetadata&iiurlwidth=" + w + "&titles=" + encodeURIComponent(titles));
+    for (const p of (j.query && j.query.pages) || []) {
+      const ii = p.imageinfo && p.imageinfo[0];
+      if (!ii || !/jpeg|png|webp/.test(ii.mime) || ii.width < 1400 || ii.width / ii.height < 1.25) continue; // solo fotos horizontales grandes
+      const md = ii.extmetadata || {};
+      const artist = stripTags(md.Artist && md.Artist.value) || "autor desconocido";
+      const lic = stripTags(md.LicenseShortName && md.LicenseShortName.value);
+      out.push({file: p.title, url: ii.thumburl || ii.url, credit: "Foto: " + artist + (lic ? " · " + lic : "") + " · Wikimedia Commons"});
+    }
+  }
+  // mantener el orden de prioridad (Wikidata y Wikipedia primero)
+  const order = files.map(f => "File:" + f.replace(/_/g, " "));
+  return out.sort((a, b) => order.indexOf(a.file) - order.indexOf(b.file));
 }
-let photoKey = "";
+
+let photoKey = "", photoPool = [], photoIdx = 0, photoTimer = null;
+const ROTATE_MS = 30 * 60 * 1000;
+function showPhoto(i){
+  const box = $("photo"), img = $("photoimg"), cr = $("credit");
+  if (!photoPool.length) { box.classList.remove("on"); document.documentElement.classList.remove("foto"); cr.hidden = true; return; }
+  photoIdx = (i + photoPool.length) % photoPool.length;
+  const ph = photoPool[photoIdx];
+  const pre = new Image();
+  pre.onload = () => {
+    img.style.opacity = 0;
+    setTimeout(() => {
+      img.src = ph.url; img.style.opacity = 1;
+      box.classList.add("on"); document.documentElement.classList.add("foto");
+      cr.textContent = ph.credit + (photoPool.length > 1 ? "  ·  " + (photoIdx + 1) + "/" + photoPool.length : ""); cr.hidden = false;
+    }, box.classList.contains("on") ? 900 : 0);
+  };
+  pre.onerror = () => { photoPool.splice(photoIdx, 1); showPhoto(photoIdx); }; // foto caída: se salta
+  pre.src = ph.url;
+  try { localStorage.setItem("tiempo.fotoIdx." + photoKey, String(photoIdx)); } catch(e) {}
+}
+window.nextPhoto = () => { if (photoPool.length > 1) showPhoto(photoIdx + 1); };
 async function cityPhoto(pl){
   if (!FONDO) return;
-  const key = "tiempo.foto2." + pl.lat.toFixed(2) + "," + pl.lon.toFixed(2);
+  const key = "tiempo.fotos3." + pl.lat.toFixed(2) + "," + pl.lon.toFixed(2);
   if (key === photoKey) return;
   photoKey = key;
-  let info = null;
-  try { const c = JSON.parse(localStorage.getItem(key)); if (c && Date.now() - c.t < 7*864e5) info = c.info; } catch(e) {}
-  if (!info) {
+  let pool = null;
+  try { const c = JSON.parse(localStorage.getItem(key)); if (c && Date.now() - c.t < 7*864e5) pool = c.pool; } catch(e) {}
+  if (!pool) {
     try {
-      const found = await findCityPhoto(pl);
-      info = found ? await photoInfo(found) : {url: null};
-      try { localStorage.setItem(key, JSON.stringify({t: Date.now(), info})); } catch(e) {}
+      pool = await photoDetails(await cityFiles(pl));
+      try { localStorage.setItem(key, JSON.stringify({t: Date.now(), pool})); } catch(e) {}
     } catch(e) { photoKey = ""; return; } // sin conexión: se reintenta en la próxima carga
   }
   if (key !== photoKey) return; // cambió la ciudad mientras buscaba
-  const box = $("photo"), img = $("photoimg"), cr = $("credit");
-  if (!info || !info.url) { box.classList.remove("on"); document.documentElement.classList.remove("foto"); cr.hidden = true; return; } // sin foto: queda el cielo
-  img.onload = () => { box.classList.add("on"); document.documentElement.classList.add("foto"); cr.textContent = info.credit; cr.hidden = false; };
-  img.onerror = () => { box.classList.remove("on"); document.documentElement.classList.remove("foto"); cr.hidden = true; };
-  img.src = info.url;
+  photoPool = pool || [];
+  let start = 0;
+  try { start = (parseInt(localStorage.getItem("tiempo.fotoIdx." + key), 10) || 0) + 1; } catch(e) {} // otra foto en cada inicio
+  showPhoto(start);
+  clearInterval(photoTimer);
+  if (photoPool.length > 1) photoTimer = setInterval(() => showPhoto(photoIdx + 1), ROTATE_MS);
 }
 
 // Frase con lo que viene en las próximas horas
 function summary(d, i){
   const H = d.hourly, end = Math.min(i+13, H.time.length);
   const cur = info(H.weather_code[i], H.is_day[i]);
-  const wet = k => { const x = info(H.weather_code[k]).kind; return isWet(x) || H.precipitation_probability[k] >= 60; };
+  const wet = k => { const x = info(H.weather_code[k]).kind, p = H.precipitation_probability[k];
+    return (isWet(x) && (p >= 40 || x === "storm" || x === "snow")) || p >= 60; }; // llovizna con poca probabilidad no cuenta
   const after = k => { const x = info(H.weather_code[k]).kind;
     return x==="clear" ? "se despeja" : x==="partly" ? "queda parcialmente nublado" : x==="fog" ? "queda con neblina" : "queda nublado"; };
   let icon = "drop", text;
