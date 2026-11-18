@@ -138,6 +138,22 @@ html.fondo .h svg{width:28px;height:28px}
 html.fondo .h .p{display:block}
 html.fondo .d{padding:4px 0}
 html.fondo #pie{color:var(--soft)}
+/* Fondo ordenado: menos cajas, más foto */
+html.fondo .wrap{width:min(500px,32vw);gap:clamp(14px,2vh,22px)}
+html.fondo #datos,html.fondo #semana,html.fondo #horas{display:none!important}
+html.fondo #summary{background:none;border:0;padding:0;-webkit-backdrop-filter:none;backdrop-filter:none;font-size:clamp(1.05rem,1.15vw,1.35rem);text-shadow:0 1px 8px rgba(0,0,0,.5)}
+html.fondo #meta{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:clamp(.82rem,.85vw,.98rem);color:var(--soft);margin-top:-6px;text-shadow:0 1px 6px rgba(0,0,0,.5)}
+html.fondo #meta b{color:var(--fg);font-weight:600}
+html.fondo #fcard{display:grid;gap:14px;padding:clamp(14px,1.4vw,20px) clamp(16px,1.6vw,24px)}
+.fdiv{height:1px;background:rgba(255,255,255,.16)}
+.fdays{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;text-align:center;font-variant-numeric:tabular-nums}
+.fday{display:grid;gap:4px;justify-items:center}
+.fday .n{font-size:.8rem;color:var(--soft);font-weight:600}
+.fday svg{width:28px;height:28px}
+.fday .t{font-size:.95rem}
+.fday .t span{color:var(--soft);font-weight:400;margin-left:4px}
+html.fondo .bigicon{width:clamp(96px,7.5vw,140px);height:clamp(96px,7.5vw,140px)}
+html.fondo .temp{font-size:clamp(5.5rem,8vw,9rem)}
 /* Foto de la ciudad (solo fondo de pantalla): debajo de las animaciones, teñida según clima y hora */
 #photo{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0;transition:opacity 1.2s ease}
 #photo.on{opacity:1}
@@ -210,11 +226,20 @@ html.fondo[class*="-n"] #photo .tint{background:linear-gradient(180deg,rgba(10,1
     </div>
   </section>
 
-  <section class="glass">
+  <div class="meta" id="meta" hidden></div>
+
+  <section class="glass" id="horas">
     <span class="lbl" id="hlabel" hidden>Próximas horas</span>
     <div class="hours" id="hours"></div>
   </section>
   <div class="more" id="more" hidden><button class="link" id="ver7" type="button">Ver 7 días →</button></div>
+
+  <!-- Fondo de pantalla: una sola tarjeta con horas y próximos días -->
+  <section class="glass" id="fcard" hidden>
+    <div class="hours" id="fhours"></div>
+    <div class="fdiv" aria-hidden="true"></div>
+    <div class="fdays" id="fdays"></div>
+  </section>
 
   <section class="glass" id="semana">
     <span class="lbl">7 días</span>
@@ -885,6 +910,30 @@ function render(d){
       '<div class="range"><span>'+Math.round(mn)+'°</span><b>'+Math.round(mx)+'°</b></div></div>';
     days.appendChild(el);
   });
+
+  if (FONDO) {
+    $("meta").hidden = false; $("fcard").hidden = false;
+    $("meta").innerHTML = "Humedad <b>" + c.relative_humidity_2m + " %</b>" +
+      "<span>Viento <b>" + Math.round(c.wind_speed_10m) + " km/h " + dir(c.wind_direction_10m) + "</b></span>" +
+      "<span>Lluvia hoy <b>" + d.daily.precipitation_sum[0].toFixed(1) + " mm</b></span>" +
+      "<span>UV <b>" + Math.round(d.daily.uv_index_max[0]) + "</b></span>";
+    const fh = $("fhours"); fh.innerHTML = "";
+    for (let k = i; k < Math.min(i + 6, d.hourly.time.length); k++) {
+      const p = d.hourly.precipitation_probability[k], el = document.createElement("div"); el.className = "h";
+      el.innerHTML = '<span class="t">' + (k === i ? "Ahora" : hhmm(d.hourly.time[k])) + '</span>' +
+        svg(info(d.hourly.weather_code[k], d.hourly.is_day[k]).icon) + '<b>' + Math.round(d.hourly.temperature_2m[k]) + '°</b>' +
+        '<span class="p" style="display:block">' + (p >= 20 ? p + " %" : "") + '</span>';
+      fh.appendChild(el);
+    }
+    const fd = $("fdays"); fd.innerHTML = "";
+    d.daily.time.slice(0, 5).forEach((t, k) => {
+      const nm = k === 0 ? "Hoy" : new Date(t + "T12:00").toLocaleDateString("es-CL", {weekday: "short"}).replace(".", "");
+      const el = document.createElement("div"); el.className = "fday";
+      el.innerHTML = '<span class="n">' + nm.charAt(0).toUpperCase() + nm.slice(1) + '</span>' + svg(info(dayCode(d, k)).icon) +
+        '<b class="t">' + Math.round(d.daily.temperature_2m_max[k]) + '°<span>' + Math.round(d.daily.temperature_2m_min[k]) + '°</span></b>';
+      fd.appendChild(el);
+    });
+  }
 
   $("updated").textContent = (place.region ? place.region + " · " : "") + "actualizado " +
     new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"}) +
